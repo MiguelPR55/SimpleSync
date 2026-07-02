@@ -19,6 +19,7 @@ import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.WorldMetadata;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -234,7 +235,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
         GoogleClientSecrets clientSecrets;
         try (InputStream in = Files.newInputStream(clientSecretFile)) {
-            clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
+            clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
         }
 
         Files.createDirectories(credentialsDir);
@@ -266,7 +267,7 @@ public class GoogleDriveProvider implements CloudProvider {
             final NetHttpTransport httpTransport = GoogleNetHttpTransport.newTrustedTransport();
             GoogleClientSecrets clientSecrets;
             try (InputStream in = Files.newInputStream(clientSecretFile)) {
-                clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
+                clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
             }
 
             Files.createDirectories(credentialsDir);

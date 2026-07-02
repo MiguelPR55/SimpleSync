@@ -173,19 +173,32 @@ public class WorldSyncTask {
     }
 
     private static void deleteDirectoryRecursively(Path directory) throws IOException {
+        if (!Files.exists(directory)) return;
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
+                deleteWithRetry(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                Files.delete(dir);
+                deleteWithRetry(dir);
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static void deleteWithRetry(Path path) throws IOException {
+        for (int i = 0; i < 3; i++) {
+            try {
+                Files.deleteIfExists(path);
+                break;
+            } catch (IOException e) {
+                if (i == 2) throw e;
+                try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+            }
+        }
     }
 
     public static long getDirectorySize(Path directory) throws IOException {

@@ -13,6 +13,7 @@
   "simplesync.conflict.world": "World: %s",
   "simplesync.conflict.local_version": "Local version: %s",
   "simplesync.conflict.cloud_version": "Cloud version: %s",
+  "simplesync.conflict.unknown": "Unknown",
   "simplesync.conflict.use_cloud": "Use Cloud Version",
   "simplesync.conflict.keep_local": "Keep Local Version",
   "simplesync.conflict.cancel": "Cancel",

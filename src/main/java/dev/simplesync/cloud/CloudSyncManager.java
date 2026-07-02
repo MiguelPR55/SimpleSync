@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -47,6 +48,11 @@ public class CloudSyncManager {
             return t;
         });
         this.status = new AtomicReference<>(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            SimpleSync.LOGGER.info("[SimpleSync] JVM shutting down. Awaiting completion of ongoing cloud sync tasks...");
+            shutdownAndAwaitTermination();
+        }, "SimpleSync-ShutdownHook"));
     }
 
     public static synchronized CloudSyncManager getInstance() {
@@ -254,5 +260,24 @@ public class CloudSyncManager {
         Path tempDir = SyncConfig.getConfigDir().resolve("temp");
         Files.createDirectories(tempDir);
         return tempDir;
+    }
+
+    /**
+     * Gracefully shuts down the sync executor, waiting up to 30 seconds for ongoing tasks to finish.
+     * Prevents corrupted or aborted syncs when the Minecraft client exits.
+     */
+    public void shutdownAndAwaitTermination() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Sync tasks did not finish within 30 seconds. Forcing shutdown...");
+                executor.shutdownNow();
+            } else {
+                SimpleSync.LOGGER.info("[SimpleSync] All sync tasks finished cleanly before JVM exit.");
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

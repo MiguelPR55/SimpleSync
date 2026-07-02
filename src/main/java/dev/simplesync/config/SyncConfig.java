@@ -5,8 +5,10 @@ import com.google.gson.GsonBuilder;
 import dev.simplesync.SimpleSync;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -70,13 +72,19 @@ public class SyncConfig {
     /**
      * Saves the configuration to disk.
      */
-    public void save() {
+    public synchronized void save() {
         Path configFile = getConfigDir().resolve(CONFIG_FILE);
+        Path tempFile = getConfigDir().resolve(CONFIG_FILE + ".tmp");
 
         try {
             Files.createDirectories(configFile.getParent());
             String json = GSON.toJson(this);
-            Files.writeString(configFile, json);
+            Files.writeString(tempFile, json);
+            try {
+                Files.move(tempFile, configFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tempFile, configFile, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             SimpleSync.LOGGER.error("[SimpleSync] Failed to save config", e);
         }

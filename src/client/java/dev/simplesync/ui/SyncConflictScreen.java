@@ -21,6 +21,8 @@ public class SyncConflictScreen extends Screen {
     private final long cloudTimestamp;
     private final Runnable onUseCloud;
     private final Runnable onKeepLocal;
+    private final String formattedLocalDate;
+    private final String formattedCloudDate;
     private boolean resolved = false;
 
     public SyncConflictScreen(String worldName, long localTimestamp, long cloudTimestamp,
@@ -31,6 +33,11 @@ public class SyncConflictScreen extends Screen {
         this.cloudTimestamp = cloudTimestamp;
         this.onUseCloud = onUseCloud;
         this.onKeepLocal = onKeepLocal;
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        String unknownText = Text.translatable("simplesync.conflict.unknown").getString();
+        this.formattedLocalDate = localTimestamp > 0 ? sdf.format(new Date(localTimestamp)) : unknownText;
+        this.formattedCloudDate = cloudTimestamp > 0 ? sdf.format(new Date(cloudTimestamp)) : unknownText;
     }
 
     @Override
@@ -88,18 +95,14 @@ public class SyncConflictScreen extends Screen {
 
         y += 25;
 
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        String localDate = localTimestamp > 0 ? sdf.format(new Date(localTimestamp)) : "Unknown";
-        String cloudDate = cloudTimestamp > 0 ? sdf.format(new Date(cloudTimestamp)) : "Unknown";
-
         context.drawCenteredTextWithShadow(this.textRenderer,
-                Text.translatable("simplesync.conflict.local_version", localDate),
+                Text.translatable("simplesync.conflict.local_version", formattedLocalDate),
                 centerX, y, 0x81C784);
 
         y += 15;
 
         context.drawCenteredTextWithShadow(this.textRenderer,
-                Text.translatable("simplesync.conflict.cloud_version", cloudDate),
+                Text.translatable("simplesync.conflict.cloud_version", formattedCloudDate),
                 centerX, y, 0x4FC3F7);
     }
 
