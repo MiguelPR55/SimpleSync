@@ -17,5 +17,13 @@ public class SimpleSyncClient implements ClientModInitializer {
         );
 
         HudRenderCallback.EVENT.register(SyncStatusOverlay.getInstance());
+
+        CloudSyncManager.getInstance().setConflictCallback((worldName, localTs, cloudTs, onUseCloud, onKeepLocal) -> {
+            MinecraftClient.getInstance().execute(() -> {
+                MinecraftClient.getInstance().setScreen(new dev.simplesync.ui.SyncConflictScreen(
+                        worldName, localTs, cloudTs, onUseCloud, onKeepLocal
+                ));
+            });
+        });
     }
 }

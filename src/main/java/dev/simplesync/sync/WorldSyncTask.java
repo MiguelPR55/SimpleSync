@@ -1,7 +1,10 @@
 package dev.simplesync.sync;
 
 import dev.simplesync.SimpleSync;
+import dev.simplesync.config.SyncConfig;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -29,53 +32,70 @@ public class WorldSyncTask {
 
         Files.createDirectories(outputZip.getParent());
 
-        // Delete session.lock if it exists (prevents issues during sync)
+        // Delete session.lock if it exists (prevents issues during sync, retry for Windows handles)
         Path sessionLock = worldFolder.resolve("session.lock");
         if (Files.exists(sessionLock)) {
-            try {
-                Files.delete(sessionLock);
-            } catch (IOException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Could not delete session.lock: {}", e.getMessage());
+            for (int i = 0; i < 5; i++) {
+                try {
+                    Files.delete(sessionLock);
+                    break;
+                } catch (IOException e) {
+                    if (i == 4) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Could not delete session.lock after retries: {}", e.getMessage());
+                    } else {
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException ignored) {}
+                    }
+                }
             }
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Compressing world: {} -> {}", worldFolder, outputZip);
 
-        try (OutputStream fos = Files.newOutputStream(outputZip);
-             ZipOutputStream zos = new ZipOutputStream(fos)) {
+        try {
+            try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(outputZip), 65536);
+                 ZipOutputStream zos = new ZipOutputStream(fos)) {
 
-            Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    if (file.getFileName().toString().equals("session.lock")) {
+                Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        if (file.getFileName().toString().equals("session.lock")) {
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        String entryName = worldFolder.relativize(file).toString().replace('\\', '/');
+                        zos.putNextEntry(new ZipEntry(entryName));
+
+                        try (InputStream fis = new BufferedInputStream(Files.newInputStream(file), 65536)) {
+                            byte[] buffer = new byte[BUFFER_SIZE];
+                            int len;
+                            while ((len = fis.read(buffer)) > 0) {
+                                zos.write(buffer, 0, len);
+                            }
+                        }
+
+                        zos.closeEntry();
                         return FileVisitResult.CONTINUE;
                     }
 
-                    String entryName = worldFolder.relativize(file).toString().replace('\\', '/');
-                    zos.putNextEntry(new ZipEntry(entryName));
-
-                    try (InputStream fis = Files.newInputStream(file)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = fis.read(buffer)) > 0) {
-                            zos.write(buffer, 0, len);
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                        String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
+                        if (!entryName.isEmpty()) {
+                            zos.putNextEntry(new ZipEntry(entryName + "/"));
+                            zos.closeEntry();
                         }
+                        return FileVisitResult.CONTINUE;
                     }
-
-                    zos.closeEntry();
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                    String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
-                    if (!entryName.isEmpty()) {
-                        zos.putNextEntry(new ZipEntry(entryName + "/"));
-                        zos.closeEntry();
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-            });
+                });
+            }
+        } catch (Exception e) {
+            try {
+                Files.deleteIfExists(outputZip);
+            } catch (IOException ignored) {}
+            if (e instanceof IOException ioe) throw ioe;
+            throw new IOException("Compression failed", e);
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Compression complete: {}", outputZip);
@@ -94,22 +114,25 @@ public class WorldSyncTask {
         }
 
         Path normalizedTarget = worldFolder.normalize();
-        SimpleSync.LOGGER.info("[SimpleSync] Extracting world: {} -> {}", zipFile, normalizedTarget);
+        Path stagingDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + "_staging");
+        Path backupDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + "_backup");
 
-        if (Files.isDirectory(normalizedTarget)) {
-            deleteDirectoryRecursively(normalizedTarget);
+        SimpleSync.LOGGER.info("[SimpleSync] Extracting world: {} -> {} (via staging)", zipFile, normalizedTarget);
+
+        if (Files.isDirectory(stagingDir)) {
+            deleteDirectoryRecursively(stagingDir);
         }
-        Files.createDirectories(normalizedTarget);
+        Files.createDirectories(stagingDir);
 
-        try (InputStream fis = Files.newInputStream(zipFile);
+        try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
              ZipInputStream zis = new ZipInputStream(fis)) {
 
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
-                Path entryPath = normalizedTarget.resolve(entry.getName()).normalize();
+                Path entryPath = stagingDir.resolve(entry.getName()).normalize();
 
                 // Security check: prevent zip slip attack
-                if (!entryPath.startsWith(normalizedTarget)) {
+                if (!entryPath.startsWith(stagingDir)) {
                     throw new IOException("ZIP entry is outside of target directory: " + entry.getName());
                 }
 
@@ -117,7 +140,7 @@ public class WorldSyncTask {
                     Files.createDirectories(entryPath);
                 } else {
                     Files.createDirectories(entryPath.getParent());
-                    try (OutputStream fos = Files.newOutputStream(entryPath)) {
+                    try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(entryPath), 65536)) {
                         byte[] buffer = new byte[BUFFER_SIZE];
                         int len;
                         while ((len = zis.read(buffer)) > 0) {
@@ -128,6 +151,22 @@ public class WorldSyncTask {
 
                 zis.closeEntry();
             }
+        } catch (IOException e) {
+            if (Files.isDirectory(stagingDir)) {
+                deleteDirectoryRecursively(stagingDir);
+            }
+            throw e;
+        }
+
+        if (Files.isDirectory(normalizedTarget)) {
+            if (Files.isDirectory(backupDir)) {
+                deleteDirectoryRecursively(backupDir);
+            }
+            Files.move(normalizedTarget, backupDir, StandardCopyOption.REPLACE_EXISTING);
+        }
+        Files.move(stagingDir, normalizedTarget);
+        if (Files.isDirectory(backupDir)) {
+            deleteDirectoryRecursively(backupDir);
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Extraction complete: {}", worldFolder);
@@ -163,5 +202,41 @@ public class WorldSyncTask {
             }
         });
         return size[0];
+    }
+
+    public static long getLatestModifiedTime(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return 0;
+        }
+
+        final long[] maxTime = {0};
+        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (attrs.lastModifiedTime().toMillis() > maxTime[0]) {
+                    maxTime[0] = attrs.lastModifiedTime().toMillis();
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return maxTime[0];
+    }
+
+    public static boolean isLocalWorldModified(Path worldFolder, SyncConfig config, String worldName) throws IOException {
+        if (!Files.isDirectory(worldFolder)) {
+            return false;
+        }
+
+        long lastSize = config.getLastLocalSize(worldName);
+        long lastMtime = config.getLastLocalMtime(worldName);
+
+        if (lastSize == 0 && lastMtime == 0) {
+            return true;
+        }
+
+        long currentSize = getDirectorySize(worldFolder);
+        long currentMtime = getLatestModifiedTime(worldFolder);
+
+        return currentSize != lastSize || Math.abs(currentMtime - lastMtime) > 2000;
     }
 }

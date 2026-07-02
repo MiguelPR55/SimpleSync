@@ -21,6 +21,7 @@ public class SyncConflictScreen extends Screen {
     private final long cloudTimestamp;
     private final Runnable onUseCloud;
     private final Runnable onKeepLocal;
+    private boolean resolved = false;
 
     public SyncConflictScreen(String worldName, long localTimestamp, long cloudTimestamp,
                               Runnable onUseCloud, Runnable onKeepLocal) {
@@ -41,7 +42,8 @@ public class SyncConflictScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.use_cloud"),
                         button -> {
-                            CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, "Downloading cloud version...");
+                            resolved = true;
+                            CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName);
                             onUseCloud.run();
                             this.close();
                         })
@@ -51,6 +53,7 @@ public class SyncConflictScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.keep_local"),
                         button -> {
+                            resolved = true;
                             onKeepLocal.run();
                             this.close();
                         })
@@ -59,7 +62,11 @@ public class SyncConflictScreen extends Screen {
 
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.cancel"),
-                        button -> this.close())
+                        button -> {
+                            resolved = true;
+                            onKeepLocal.run();
+                            this.close();
+                        })
                 .dimensions(centerX - 100, buttonY + 30, 200, 20)
                 .build());
     }
@@ -99,5 +106,14 @@ public class SyncConflictScreen extends Screen {
     @Override
     public boolean shouldCloseOnEsc() {
         return true;
+    }
+
+    @Override
+    public void close() {
+        if (!resolved) {
+            resolved = true;
+            onKeepLocal.run();
+        }
+        super.close();
     }
 }

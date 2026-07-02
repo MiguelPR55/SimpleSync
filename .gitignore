@@ -22,10 +22,10 @@ Thumbs.db
 bin/
 
 # Minecraft & SimpleSync Sensitive / Local runtime data
-run/
-config/
-saves/
+/run/
+/config/
+/saves/
 client_secret.json
-credentials/
+/credentials/
 *.secret
-temp/
+/temp/

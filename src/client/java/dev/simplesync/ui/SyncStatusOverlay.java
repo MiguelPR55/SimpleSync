@@ -1,12 +1,14 @@
 package dev.simplesync.ui;
 
 import dev.simplesync.cloud.CloudSyncManager;
+import dev.simplesync.sync.StatusSnapshot;
 import dev.simplesync.sync.SyncStatus;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
+import net.minecraft.text.Text;
 
 /**
  * HUD overlay that displays the current sync status.
@@ -20,8 +22,6 @@ public class SyncStatusOverlay implements HudRenderCallback {
     private static final int PADDING = 6;
     private static final int MARGIN = 10;
 
-    private int animationTick = 0;
-
     public static SyncStatusOverlay getInstance() {
         return INSTANCE;
     }
@@ -29,28 +29,30 @@ public class SyncStatusOverlay implements HudRenderCallback {
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
         CloudSyncManager manager = CloudSyncManager.getInstance();
-        SyncStatus status = manager.getStatus();
+        StatusSnapshot snapshot = manager.getStatusSnapshot();
+        SyncStatus status = snapshot.status();
 
         if (status == SyncStatus.IDLE) {
             return;
         }
 
+        long elapsed = System.currentTimeMillis() - snapshot.timestamp();
+
         // Auto-hide DONE/ERROR status after a while
         if (status == SyncStatus.DONE || status == SyncStatus.ERROR) {
-            long elapsed = System.currentTimeMillis() - manager.getStatusTimestamp();
             if (elapsed > DISPLAY_DURATION_MS + FADE_DURATION_MS) {
                 manager.clearStatus();
                 return;
             }
         }
 
-        animationTick++;
-
         MinecraftClient client = MinecraftClient.getInstance();
         TextRenderer textRenderer = client.textRenderer;
-        String message = manager.getStatusMessage();
+        String statusText = Text.translatable(status.getTranslationKey()).getString();
+        String detail = snapshot.detail();
+        String message = detail != null && !detail.isEmpty() ? statusText + " (" + detail + ")" : statusText;
         String icon = getStatusIcon(status);
-        String displayText = icon + " " + message;
+        String displayText = icon.isEmpty() ? message : icon + " " + message;
 
         int textWidth = textRenderer.getWidth(displayText);
         int screenWidth = drawContext.getScaledWindowWidth();
@@ -61,7 +63,6 @@ public class SyncStatusOverlay implements HudRenderCallback {
         // Calculate opacity for fade effect
         int alpha = 255;
         if (status == SyncStatus.DONE || status == SyncStatus.ERROR) {
-            long elapsed = System.currentTimeMillis() - manager.getStatusTimestamp();
             if (elapsed > DISPLAY_DURATION_MS) {
                 float fadeProgress = (float) (elapsed - DISPLAY_DURATION_MS) / FADE_DURATION_MS;
                 alpha = (int) (255 * (1.0f - Math.min(fadeProgress, 1.0f)));
@@ -117,7 +118,11 @@ public class SyncStatusOverlay implements HudRenderCallback {
 
     private String getSpinner() {
         String[] frames = {"|", "/", "-", "\\"};
-        return frames[(animationTick / 5) % frames.length];
+        int frame = (int) ((System.currentTimeMillis() / 120) % frames.length);
+        if (frame < 0) {
+            frame += frames.length;
+        }
+        return frames[frame];
     }
 
     private int getStatusColor(SyncStatus status) {
