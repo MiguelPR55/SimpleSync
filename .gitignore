@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+out/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# Local JDK
+.jdk21/
+
+# Log files & OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+bin/
+
+# Minecraft & SimpleSync Sensitive / Local runtime data
+run/
+config/
+saves/
+client_secret.json
+credentials/
+*.secret
+temp/

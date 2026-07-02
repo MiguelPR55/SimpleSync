@@ -1,0 +1,23 @@
+{
+  "simplesync.status.idle": "Idle",
+  "simplesync.status.authenticating": "Authenticating...",
+  "simplesync.status.checking": "Checking for updates...",
+  "simplesync.status.downloading": "Downloading...",
+  "simplesync.status.uploading": "Uploading...",
+  "simplesync.status.compressing": "Compressing...",
+  "simplesync.status.extracting": "Extracting...",
+  "simplesync.status.done": "Done",
+  "simplesync.status.error": "Error",
+  "simplesync.status.conflict": "Conflict detected",
+  "simplesync.conflict.title": "Sync Conflict Detected",
+  "simplesync.conflict.world": "World: %s",
+  "simplesync.conflict.local_version": "Local version: %s",
+  "simplesync.conflict.cloud_version": "Cloud version: %s",
+  "simplesync.conflict.use_cloud": "Use Cloud Version",
+  "simplesync.conflict.keep_local": "Keep Local Version",
+  "simplesync.conflict.cancel": "Cancel",
+  "simplesync.toast.sync_complete": "Sync Complete",
+  "simplesync.toast.sync_failed": "Sync Failed",
+  "simplesync.toast.uploading": "Uploading world...",
+  "simplesync.toast.downloading": "Downloading world..."
+}

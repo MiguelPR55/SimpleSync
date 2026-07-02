@@ -1,0 +1,23 @@
+{
+  "simplesync.status.idle": "Inactivo",
+  "simplesync.status.authenticating": "Autenticando...",
+  "simplesync.status.checking": "Buscando actualizaciones...",
+  "simplesync.status.downloading": "Descargando...",
+  "simplesync.status.uploading": "Subiendo...",
+  "simplesync.status.compressing": "Comprimiendo...",
+  "simplesync.status.extracting": "Extrayendo...",
+  "simplesync.status.done": "Hecho",
+  "simplesync.status.error": "Error",
+  "simplesync.status.conflict": "Conflicto detectado",
+  "simplesync.conflict.title": "Conflicto de sincronización",
+  "simplesync.conflict.world": "Mundo: %s",
+  "simplesync.conflict.local_version": "Versión local: %s",
+  "simplesync.conflict.cloud_version": "Versión en la nube: %s",
+  "simplesync.conflict.use_cloud": "Usar versión de la nube",
+  "simplesync.conflict.keep_local": "Mantener versión local",
+  "simplesync.conflict.cancel": "Cancelar",
+  "simplesync.toast.sync_complete": "Sincronización completada",
+  "simplesync.toast.sync_failed": "Sincronización fallida",
+  "simplesync.toast.uploading": "Subiendo mundo...",
+  "simplesync.toast.downloading": "Descargando mundo..."
+}

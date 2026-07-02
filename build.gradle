@@ -1,0 +1,107 @@
+plugins {
+    id 'fabric-loom' version '1.10-SNAPSHOT'
+    id 'maven-publish'
+    id 'com.gradleup.shadow' version '9.0.0-beta12'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        simplesync {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+configurations {
+    shadowBundle {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+dependencies {
+    // Minecraft and Fabric
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Google Drive API
+    implementation 'com.google.api-client:google-api-client:2.7.2'
+    shadowBundle 'com.google.api-client:google-api-client:2.7.2'
+
+    implementation 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
+    shadowBundle 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
+
+    implementation 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
+    shadowBundle 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
+
+    implementation 'com.google.http-client:google-http-client-gson:1.45.3'
+    shadowBundle 'com.google.http-client:google-http-client-gson:1.45.3'
+}
+
+shadowJar {
+    configurations = [project.configurations.shadowBundle]
+    archiveClassifier = 'shadow-dev'
+
+    relocate 'com.google', 'dev.simplesync.shadow.com.google'
+    relocate 'io.grpc', 'dev.simplesync.shadow.io.grpc'
+    relocate 'org.apache.http', 'dev.simplesync.shadow.org.apache.http'
+    relocate 'org.mortbay', 'dev.simplesync.shadow.org.mortbay'
+    relocate 'org.eclipse.jetty', 'dev.simplesync.shadow.org.eclipse.jetty'
+    relocate 'javax.servlet', 'dev.simplesync.shadow.javax.servlet'
+    relocate 'jakarta.servlet', 'dev.simplesync.shadow.jakarta.servlet'
+
+    // Exclude duplicate META-INF files
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/LICENSE*'
+    exclude 'META-INF/NOTICE*'
+    exclude 'META-INF/DEPENDENCIES'
+    exclude 'META-INF/maven/**'
+}
+
+remapJar {
+    dependsOn shadowJar
+    inputFile = shadowJar.archiveFile
+}
+
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from('LICENSE') {
+        rename { "${it}_${project.archivesBaseName}" }
+    }
+}

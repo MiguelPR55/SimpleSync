@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "simplesync",
+  "version": "${version}",
+  "name": "SimpleSync",
+  "description": "Sync your singleplayer worlds across multiple computers via cloud storage. Play anywhere, always up to date.",
+  "authors": [
+    "SimpleSync Contributors"
+  ],
+  "contact": {
+    "sources": "https://github.com/simplesync/simplesync"
+  },
+  "license": "MIT",
+  "icon": "assets/simplesync/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.simplesync.SimpleSync"
+    ],
+    "client": [
+      "dev.simplesync.SimpleSyncClient"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "simplesync.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.5",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
