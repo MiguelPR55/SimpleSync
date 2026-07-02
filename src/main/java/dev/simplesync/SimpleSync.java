@@ -28,8 +28,12 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             if (isIntegratedServer(server) && lastWorldName != null) {
-                LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
-                CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
+                if (dev.simplesync.config.SyncConfig.load().autoSyncOnExit) {
+                    LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
+                    CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
+                } else {
+                    LOGGER.info("[SimpleSync] World stopped: {}, but autoSyncOnExit is disabled. Skipping auto-upload.", lastWorldName);
+                }
             }
         });
     }

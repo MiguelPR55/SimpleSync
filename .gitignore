@@ -10,6 +10,7 @@ gradle-app.setting
 
 # Log files & OS files
 *.log
+logs/
 .DS_Store
 Thumbs.db
 

@@ -84,7 +84,7 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     @Override
-    public void upload(String worldName, Path zipFile) throws IOException {
+    public WorldMetadata upload(String worldName, Path zipFile) throws IOException {
         ensureAuthenticated();
         ensureSimpleSyncFolder();
 
@@ -114,6 +114,10 @@ public class GoogleDriveProvider implements CloudProvider {
         if (uploadedFile != null && uploadedFile.getId() != null) {
             fileIdCache.put(fileName, uploadedFile.getId());
         }
+        long mtime = (uploadedFile != null && uploadedFile.getModifiedTime() != null) ? uploadedFile.getModifiedTime().getValue() : System.currentTimeMillis();
+        long size = (uploadedFile != null && uploadedFile.getSize() != null) ? uploadedFile.getSize() : 0;
+        String id = (uploadedFile != null) ? uploadedFile.getId() : existingFileId;
+        return new WorldMetadata(worldName, mtime, size, id);
     }
 
     @Override
@@ -158,6 +162,10 @@ public class GoogleDriveProvider implements CloudProvider {
                 .setFields("files(id, name, modifiedTime, size)")
                 .setOrderBy("modifiedTime desc")
                 .execute(), 3);
+
+        if (result == null || result.getFiles() == null) {
+            return worlds;
+        }
 
         for (File file : result.getFiles()) {
             if (file.getName() != null && file.getId() != null) {
@@ -316,12 +324,12 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         FileList result = withRetry(() -> driveService.files().list()
-                .setQ("name='" + SIMPLESYNC_FOLDER_NAME + "' and mimeType='application/vnd.google-apps.folder' and trashed=false")
+                .setQ("name='" + escapeQueryString(SIMPLESYNC_FOLDER_NAME) + "' and mimeType='application/vnd.google-apps.folder' and trashed=false")
                 .setFields("files(id)")
                 .setOrderBy("createdTime")
                 .execute(), 3);
 
-        if (!result.getFiles().isEmpty()) {
+        if (result != null && result.getFiles() != null && !result.getFiles().isEmpty()) {
             simpleSyncFolderId = result.getFiles().get(0).getId();
             SimpleSync.LOGGER.info("[SimpleSync] Found SimpleSync folder: {}", simpleSyncFolderId);
         } else {
@@ -349,7 +357,7 @@ public class GoogleDriveProvider implements CloudProvider {
         ensureSimpleSyncFolder();
 
         String query = String.format("name='%s' and '%s' in parents and trashed=false",
-                fileName, simpleSyncFolderId);
+                escapeQueryString(fileName), simpleSyncFolderId);
 
         FileList result = withRetry(() -> driveService.files().list()
                 .setQ(query)
@@ -357,12 +365,16 @@ public class GoogleDriveProvider implements CloudProvider {
                 .setOrderBy("modifiedTime desc")
                 .execute(), 3);
 
-        if (!result.getFiles().isEmpty()) {
+        if (result != null && result.getFiles() != null && !result.getFiles().isEmpty()) {
             String id = result.getFiles().get(0).getId();
             fileIdCache.put(fileName, id);
             return id;
         }
         return null;
+    }
+
+    private String escapeQueryString(String str) {
+        return str != null ? str.replace("'", "\\'") : "";
     }
 
     private <T> T withRetry(Callable<T> action, int maxAttempts) throws IOException {

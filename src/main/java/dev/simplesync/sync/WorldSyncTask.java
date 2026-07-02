@@ -127,8 +127,10 @@ public class WorldSyncTask {
         try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
              ZipInputStream zis = new ZipInputStream(fis)) {
 
+            boolean hasEntries = false;
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
+                hasEntries = true;
                 Path entryPath = stagingDir.resolve(entry.getName()).normalize();
 
                 // Security check: prevent zip slip attack
@@ -151,6 +153,9 @@ public class WorldSyncTask {
 
                 zis.closeEntry();
             }
+            if (!hasEntries) {
+                throw new IOException("ZIP archive is empty or invalid: " + zipFile);
+            }
         } catch (IOException e) {
             if (Files.isDirectory(stagingDir)) {
                 deleteDirectoryRecursively(stagingDir);
@@ -164,7 +169,19 @@ public class WorldSyncTask {
             }
             Files.move(normalizedTarget, backupDir, StandardCopyOption.REPLACE_EXISTING);
         }
-        Files.move(stagingDir, normalizedTarget);
+        try {
+            Files.move(stagingDir, normalizedTarget);
+        } catch (IOException e) {
+            if (Files.isDirectory(backupDir)) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Extraction move failed, rolling back from backup...");
+                try {
+                    Files.move(backupDir, normalizedTarget, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException rollbackEx) {
+                    SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup!", rollbackEx);
+                }
+            }
+            throw e;
+        }
         if (Files.isDirectory(backupDir)) {
             deleteDirectoryRecursively(backupDir);
         }
@@ -244,7 +261,7 @@ public class WorldSyncTask {
         long lastMtime = config.getLastLocalMtime(worldName);
 
         if (lastSize == 0 && lastMtime == 0) {
-            return true;
+            return false;
         }
 
         long currentSize = getDirectorySize(worldFolder);

@@ -32,9 +32,10 @@ public interface CloudProvider {
      * Uploads a world ZIP file to the cloud.
      * @param worldName The name of the world
      * @param zipFile   Path to the ZIP file to upload
+     * @return Metadata of the uploaded world (including server authoritative timestamp)
      * @throws IOException if upload fails
      */
-    void upload(String worldName, Path zipFile) throws IOException;
+    WorldMetadata upload(String worldName, Path zipFile) throws IOException;
 
     /**
      * Downloads a world ZIP file from the cloud.
