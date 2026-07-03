@@ -1,25 +1,25 @@
 # SimpleSync
 
-SimpleSync es un mod de Minecraft desarrollado para la plataforma **Fabric** (Java 21) que sincroniza automáticamente tus mundos de un solo jugador (*singleplayer*) con **Google Drive**.
+SimpleSync is a Minecraft mod developed for the Fabric platform (Java 21) that automatically synchronizes your single-player world saves with Google Drive.
 
-## 🚀 Características
+## Features
 
-- **Sincronización en segundo plano:** Las operaciones de subida y bajada se ejecutan asíncronamente en un hilo secundario para evitar congelar el juego.
-- **Detección y resolución de conflictos:** Si un mundo ha sido modificado tanto en local como en la nube, se muestra una interfaz gráfica para que decidas qué versión mantener.
-- **Indicador visual en el HUD:** Muestra el estado del progreso en tiempo real (comprimiendo, subiendo, descargando, etc.) y porcentaje completado.
-- **Robustez y seguridad:**
-  - Recuperación automática ante cierres abruptos (limpieza y restauración de respaldos).
-  - Prevención de ataques de *path traversal* (*zip-slip*).
-  - Reintentos con *exponential backoff* ignorando fallos del cliente permanentes (4xx).
+- Background synchronization: Upload and download operations run asynchronously on a background thread to prevent game freezes.
+- Conflict detection and resolution: If a world has been modified both locally and in the cloud, a GUI is displayed so you can choose which version to keep.
+- Visual HUD overlay: Displays real-time sync status (compressing, uploading, downloading, etc.) along with the completion percentage.
+- Robustness and security:
+  - Automatic self-healing for abnormal shutdowns (cleans up and restores backups).
+  - Prevention of path traversal attacks (zip-slip).
+  - Retries with exponential backoff, failing immediately on permanent client-side errors (4xx).
 
-## 🛠️ Requisitos e Instalación
+## Requirements and Installation
 
-1. Asegúrate de tener **Minecraft** con **Fabric Loader** instalado.
-2. Coloca el archivo `.jar` del mod en tu carpeta `mods/`.
-3. Crea un proyecto en la consola de Google Cloud, habilita la API de Google Drive, crea credenciales de OAuth2 para una aplicación de escritorio, y descarga el archivo JSON de credenciales.
-4. Coloca el archivo `client_secret.json` en la ruta `config/simplesync/client_secret.json`.
-5. Al iniciar el juego, el mod te pedirá autorización a través de tu navegador la primera vez.
+1. Ensure you have Minecraft with Fabric Loader installed.
+2. Place the mod's `.jar` file in your `mods/` directory.
+3. Create a project in the Google Cloud Console, enable the Google Drive API, create OAuth2 credentials for a desktop application, and download the credentials JSON file.
+4. Place the downloaded JSON file as `client_secret.json` in the path `config/simplesync/client_secret.json`.
+5. Upon launching the game for the first time, the mod will prompt you for authorization in your web browser.
 
-## 📄 Licencia
+## License
 
-Este proyecto está bajo la licencia **MIT**. Consulta el archivo `LICENSE` para obtener más información.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
