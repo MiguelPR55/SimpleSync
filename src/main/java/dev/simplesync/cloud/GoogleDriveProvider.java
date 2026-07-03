@@ -229,67 +229,38 @@ public class GoogleDriveProvider implements CloudProvider {
 
     // ─── Private Helpers ────────────────────────────────────────────────────
 
-    private void initializeDriveService() throws IOException, GeneralSecurityException {
+    private GoogleAuthorizationCodeFlow createFlow(NetHttpTransport transport) throws IOException, GeneralSecurityException {
         Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
+        if (!Files.exists(clientSecretFile)) return null;
+        GoogleClientSecrets secrets;
+        try (InputStream in = Files.newInputStream(clientSecretFile)) {
+            secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
+        }
+        Files.createDirectories(credentialsDir);
+        return new GoogleAuthorizationCodeFlow.Builder(transport, JSON_FACTORY, secrets, SCOPES)
+                .setDataStoreFactory(new FileDataStoreFactory(credentialsDir.toFile())).setAccessType("offline").build();
+    }
 
-        if (!Files.exists(clientSecretFile)) {
-            SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
-            SimpleSync.LOGGER.warn("[SimpleSync] Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
-            SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
+    private void initializeDriveService() throws IOException, GeneralSecurityException {
+        final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
+        GoogleAuthorizationCodeFlow flow = createFlow(transport);
+        if (flow == null) {
+            SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found in config/simplesync/ folder.");
             return;
         }
-
-        final NetHttpTransport httpTransport = GoogleNetHttpTransport.newTrustedTransport();
-
-        GoogleClientSecrets clientSecrets;
-        try (InputStream in = Files.newInputStream(clientSecretFile)) {
-            clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
-        }
-
-        Files.createDirectories(credentialsDir);
-        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                httpTransport, JSON_FACTORY, clientSecrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(credentialsDir.toFile()))
-                .setAccessType("offline")
-                .build();
-
-        LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .setPort(-1)
-                .build();
-
-        Credential credential = new com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp(
-                flow, receiver).authorize("user");
-
-        driveService = new Drive.Builder(httpTransport, JSON_FACTORY, credential)
-                .setApplicationName(APPLICATION_NAME)
-                .build();
+        LocalServerReceiver receiver = new LocalServerReceiver.Builder().setPort(-1).build();
+        Credential credential = new com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+        driveService = new Drive.Builder(transport, JSON_FACTORY, credential).setApplicationName(APPLICATION_NAME).build();
     }
 
     private boolean initializeDriveServiceOffline() {
-        Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
-        if (!Files.exists(clientSecretFile)) {
-            return false;
-        }
-
         try {
-            final NetHttpTransport httpTransport = GoogleNetHttpTransport.newTrustedTransport();
-            GoogleClientSecrets clientSecrets;
-            try (InputStream in = Files.newInputStream(clientSecretFile)) {
-                clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
-            }
-
-            Files.createDirectories(credentialsDir);
-            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                    httpTransport, JSON_FACTORY, clientSecrets, SCOPES)
-                    .setDataStoreFactory(new FileDataStoreFactory(credentialsDir.toFile()))
-                    .setAccessType("offline")
-                    .build();
-
-            Credential credential = flow.loadCredential("user");
-            if (credential != null && (credential.getRefreshToken() != null || credential.getAccessToken() != null)) {
-                driveService = new Drive.Builder(httpTransport, JSON_FACTORY, credential)
-                        .setApplicationName(APPLICATION_NAME)
-                        .build();
+            final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
+            GoogleAuthorizationCodeFlow flow = createFlow(transport);
+            if (flow == null) return false;
+            Credential cred = flow.loadCredential("user");
+            if (cred != null && (cred.getRefreshToken() != null || cred.getAccessToken() != null)) {
+                driveService = new Drive.Builder(transport, JSON_FACTORY, cred).setApplicationName(APPLICATION_NAME).build();
                 return true;
             }
         } catch (Exception e) {

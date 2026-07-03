@@ -57,6 +57,9 @@ public class SyncConfig {
                 String json = Files.readString(configFile);
                 SyncConfig config = GSON.fromJson(json, SyncConfig.class);
                 if (config != null) {
+                    if (config.lastSyncTimestamps == null) config.lastSyncTimestamps = new HashMap<>();
+                    if (config.lastLocalSizes == null) config.lastLocalSizes = new HashMap<>();
+                    if (config.lastLocalMtimes == null) config.lastLocalMtimes = new HashMap<>();
                     return config;
                 }
             } catch (Exception e) {
@@ -90,41 +93,12 @@ public class SyncConfig {
         }
     }
 
-    public long getLastSyncTimestamp(String worldName) {
-        return lastSyncTimestamps.getOrDefault(worldName, 0L);
-    }
-
-    public void setLastSyncTimestamp(String worldName, long timestamp) {
-        lastSyncTimestamps.put(worldName, timestamp);
-    }
-
-    public long getLastLocalSize(String worldName) {
-        return lastLocalSizes != null ? lastLocalSizes.getOrDefault(worldName, 0L) : 0L;
-    }
-
-    public void setLastLocalSize(String worldName, long size) {
-        if (lastLocalSizes == null) {
-            lastLocalSizes = new HashMap<>();
-        }
-        lastLocalSizes.put(worldName, size);
-    }
-
-    public long getLastLocalMtime(String worldName) {
-        return lastLocalMtimes != null ? lastLocalMtimes.getOrDefault(worldName, 0L) : 0L;
-    }
-
-    public void setLastLocalMtime(String worldName, long mtime) {
-        if (lastLocalMtimes == null) {
-            lastLocalMtimes = new HashMap<>();
-        }
-        lastLocalMtimes.put(worldName, mtime);
-    }
-
-    public String getSimpleSyncFolderId() {
-        return simpleSyncFolderId;
-    }
-
-    public void setSimpleSyncFolderId(String folderId) {
-        this.simpleSyncFolderId = folderId;
-    }
+    public long getLastSyncTimestamp(String w) { return lastSyncTimestamps.getOrDefault(w, 0L); }
+    public void setLastSyncTimestamp(String w, long ts) { lastSyncTimestamps.put(w, ts); }
+    public long getLastLocalSize(String w) { return lastLocalSizes.getOrDefault(w, 0L); }
+    public void setLastLocalSize(String w, long sz) { lastLocalSizes.put(w, sz); }
+    public long getLastLocalMtime(String w) { return lastLocalMtimes.getOrDefault(w, 0L); }
+    public void setLastLocalMtime(String w, long mt) { lastLocalMtimes.put(w, mt); }
+    public String getSimpleSyncFolderId() { return simpleSyncFolderId; }
+    public void setSimpleSyncFolderId(String id) { this.simpleSyncFolderId = id; }
 }

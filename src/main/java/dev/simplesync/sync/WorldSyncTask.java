@@ -218,39 +218,29 @@ public class WorldSyncTask {
         }
     }
 
-    public static long getDirectorySize(Path directory) throws IOException {
-        if (!Files.isDirectory(directory)) {
-            return 0;
-        }
+    public record WorldStats(long size, long latestModifiedTime) {}
 
-        final long[] size = {0};
+    public static WorldStats getWorldStats(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return new WorldStats(0, 0);
+        }
+        final long[] stats = {0, 0}; // [size, maxTime]
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                size[0] += attrs.size();
-                return FileVisitResult.CONTINUE;
-            }
-        });
-        return size[0];
-    }
-
-    public static long getLatestModifiedTime(Path directory) throws IOException {
-        if (!Files.isDirectory(directory)) {
-            return 0;
-        }
-
-        final long[] maxTime = {0};
-        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (attrs.lastModifiedTime().toMillis() > maxTime[0]) {
-                    maxTime[0] = attrs.lastModifiedTime().toMillis();
+                stats[0] += attrs.size();
+                long mtime = attrs.lastModifiedTime().toMillis();
+                if (mtime > stats[1]) {
+                    stats[1] = mtime;
                 }
                 return FileVisitResult.CONTINUE;
             }
         });
-        return maxTime[0];
+        return new WorldStats(stats[0], stats[1]);
     }
+
+    public static long getDirectorySize(Path dir) throws IOException { return getWorldStats(dir).size(); }
+    public static long getLatestModifiedTime(Path dir) throws IOException { return getWorldStats(dir).latestModifiedTime(); }
 
     public static boolean isLocalWorldModified(Path worldFolder, SyncConfig config, String worldName) throws IOException {
         if (!Files.isDirectory(worldFolder)) {
@@ -264,9 +254,7 @@ public class WorldSyncTask {
             return false;
         }
 
-        long currentSize = getDirectorySize(worldFolder);
-        long currentMtime = getLatestModifiedTime(worldFolder);
-
-        return currentSize != lastSize || Math.abs(currentMtime - lastMtime) > 2000;
+        WorldStats stats = getWorldStats(worldFolder);
+        return stats.size() != lastSize || Math.abs(stats.latestModifiedTime() - lastMtime) > 2000;
     }
 }

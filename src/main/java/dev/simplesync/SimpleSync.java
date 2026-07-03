@@ -5,6 +5,7 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.WorldSavePath;
+import dev.simplesync.config.SyncConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,7 +29,7 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             if (isIntegratedServer(server) && lastWorldName != null) {
-                if (dev.simplesync.config.SyncConfig.load().autoSyncOnExit) {
+                if (SyncConfig.load().autoSyncOnExit) {
                     LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
                     CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
                 } else {

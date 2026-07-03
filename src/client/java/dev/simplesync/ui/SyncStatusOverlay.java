@@ -21,6 +21,7 @@ public class SyncStatusOverlay implements HudRenderCallback {
     private static final int FADE_DURATION_MS = 1000;
     private static final int PADDING = 6;
     private static final int MARGIN = 10;
+    private static final String[] SPINNER_FRAMES = {"|", "/", "-", "\\"};
 
     public static SyncStatusOverlay getInstance() {
         return INSTANCE;
@@ -117,12 +118,11 @@ public class SyncStatusOverlay implements HudRenderCallback {
     }
 
     private String getSpinner() {
-        String[] frames = {"|", "/", "-", "\\"};
-        int frame = (int) ((System.currentTimeMillis() / 120) % frames.length);
+        int frame = (int) ((System.currentTimeMillis() / 120) % SPINNER_FRAMES.length);
         if (frame < 0) {
-            frame += frames.length;
+            frame += SPINNER_FRAMES.length;
         }
-        return frames[frame];
+        return SPINNER_FRAMES[frame];
     }
 
     private int getStatusColor(SyncStatus status) {

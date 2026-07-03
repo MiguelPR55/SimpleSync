@@ -33,13 +33,8 @@ public class CloudSyncManager {
     private Path savesDirectory;
     private ConflictCallback conflictCallback;
 
-    public void setConflictCallback(ConflictCallback callback) {
-        this.conflictCallback = callback;
-    }
-
-    public void setSavesDirectory(Path savesDirectory) {
-        this.savesDirectory = savesDirectory;
-    }
+    public void setConflictCallback(ConflictCallback callback) { this.conflictCallback = callback; }
+    public void setSavesDirectory(Path savesDirectory) { this.savesDirectory = savesDirectory; }
 
     private CloudSyncManager() {
         this.executor = Executors.newSingleThreadExecutor(r -> {
@@ -56,16 +51,12 @@ public class CloudSyncManager {
     }
 
     public static synchronized CloudSyncManager getInstance() {
-        if (instance == null) {
-            instance = new CloudSyncManager();
-        }
+        if (instance == null) instance = new CloudSyncManager();
         return instance;
     }
 
     public CloudProvider getProvider() {
-        if (provider == null) {
-            provider = new GoogleDriveProvider();
-        }
+        if (provider == null) provider = new GoogleDriveProvider();
         return provider;
     }
 
@@ -133,18 +124,12 @@ public class CloudSyncManager {
                                 setStatus(SyncStatus.EXTRACTING, cloudWorld.worldName());
                                 WorldSyncTask.extractWorld(tempZip, worldFolder);
 
-                                config.setLastSyncTimestamp(cloudWorld.worldName(), cloudWorld.lastModified());
-                                try {
-                                    config.setLastLocalSize(cloudWorld.worldName(), WorldSyncTask.getDirectorySize(worldFolder));
-                                    config.setLastLocalMtime(cloudWorld.worldName(), WorldSyncTask.getLatestModifiedTime(worldFolder));
-                                } catch (IOException ignored) {}
+                                updateWorldTracking(config, cloudWorld.worldName(), worldFolder, cloudWorld.lastModified());
 
                                 downloadCount++;
                                 SimpleSync.LOGGER.info("[SimpleSync] Downloaded world: {}", cloudWorld.worldName());
                             } finally {
-                                try {
-                                    Files.deleteIfExists(tempZip);
-                                } catch (IOException ignored) {}
+                                deleteQuietly(tempZip);
                             }
                         } else {
                             SimpleSync.LOGGER.info("[SimpleSync] World '{}' is up to date", cloudWorld.worldName());
@@ -203,19 +188,13 @@ public class CloudSyncManager {
                     WorldMetadata uploadedMeta = cloud.upload(worldName, tempZip);
 
                     long newTimestamp = uploadedMeta != null && uploadedMeta.lastModified() > 0 ? uploadedMeta.lastModified() : System.currentTimeMillis();
-                    config.setLastSyncTimestamp(worldName, newTimestamp);
-                    try {
-                        config.setLastLocalSize(worldName, WorldSyncTask.getDirectorySize(worldFolder));
-                        config.setLastLocalMtime(worldName, WorldSyncTask.getLatestModifiedTime(worldFolder));
-                    } catch (IOException ignored) {}
+                    updateWorldTracking(config, worldName, worldFolder, newTimestamp);
                     config.save();
 
                     setStatus(SyncStatus.DONE, "");
                     SimpleSync.LOGGER.info("[SimpleSync] Successfully uploaded world: {}", worldName);
                 } finally {
-                    try {
-                        Files.deleteIfExists(tempZip);
-                    } catch (IOException ignored) {}
+                    deleteQuietly(tempZip);
                 }
 
             } catch (Exception e) {
@@ -227,44 +206,41 @@ public class CloudSyncManager {
 
     // ─── Status Management ──────────────────────────────────────────────────
 
-    public StatusSnapshot getStatusSnapshot() {
-        return status.get();
-    }
-
-    public SyncStatus getStatus() {
-        return status.get().status();
-    }
-
-    public String getStatusMessage() {
-        return status.get().detail();
-    }
-
-    public long getStatusTimestamp() {
-        return status.get().timestamp();
-    }
+    public StatusSnapshot getStatusSnapshot() { return status.get(); }
+    public SyncStatus getStatus() { return status.get().status(); }
+    public String getStatusMessage() { return status.get().detail(); }
+    public long getStatusTimestamp() { return status.get().timestamp(); }
 
     public void setStatus(SyncStatus status, String detail) {
         this.status.set(new StatusSnapshot(status, detail != null ? detail : "", System.currentTimeMillis()));
         SimpleSync.LOGGER.debug("[SimpleSync] Status: {} - {}", status, detail);
     }
 
-    public void clearStatus() {
-        this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
-    }
+    public void clearStatus() { this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L)); }
 
     // ─── Path Helpers ────────────────────────────────────────────────────────
 
-    private Path getSavesDirectory() {
-        if (savesDirectory == null) {
-            savesDirectory = Path.of("saves");
-        }
-        return savesDirectory;
-    }
+    private Path getSavesDirectory() { return savesDirectory == null ? (savesDirectory = Path.of("saves")) : savesDirectory; }
 
     private Path getTempDir() throws IOException {
         Path tempDir = SyncConfig.getConfigDir().resolve("temp");
         Files.createDirectories(tempDir);
         return tempDir;
+    }
+
+    private void updateWorldTracking(SyncConfig config, String worldName, Path worldFolder, long timestamp) {
+        config.setLastSyncTimestamp(worldName, timestamp);
+        try {
+            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
+            config.setLastLocalSize(worldName, stats.size());
+            config.setLastLocalMtime(worldName, stats.latestModifiedTime());
+        } catch (IOException ignored) {}
+    }
+
+    private void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {}
     }
 
     /**

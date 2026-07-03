@@ -17,8 +17,6 @@ import java.util.Date;
 public class SyncConflictScreen extends Screen {
 
     private final String worldName;
-    private final long localTimestamp;
-    private final long cloudTimestamp;
     private final Runnable onUseCloud;
     private final Runnable onKeepLocal;
     private final String formattedLocalDate;
@@ -29,8 +27,6 @@ public class SyncConflictScreen extends Screen {
                               Runnable onUseCloud, Runnable onKeepLocal) {
         super(Text.translatable("simplesync.conflict.title"));
         this.worldName = worldName;
-        this.localTimestamp = localTimestamp;
-        this.cloudTimestamp = cloudTimestamp;
         this.onUseCloud = onUseCloud;
         this.onKeepLocal = onKeepLocal;
 
