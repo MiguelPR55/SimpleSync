@@ -124,66 +124,68 @@ public class WorldSyncTask {
         }
         Files.createDirectories(stagingDir);
 
-        try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
-             ZipInputStream zis = new ZipInputStream(fis)) {
+        try {
+            try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
+                 ZipInputStream zis = new ZipInputStream(fis)) {
 
-            boolean hasEntries = false;
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                hasEntries = true;
-                Path entryPath = stagingDir.resolve(entry.getName()).normalize();
+                boolean hasEntries = false;
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    hasEntries = true;
+                    Path entryPath = stagingDir.resolve(entry.getName()).normalize();
 
-                // Security check: prevent zip slip attack
-                if (!entryPath.startsWith(stagingDir)) {
-                    throw new IOException("ZIP entry is outside of target directory: " + entry.getName());
-                }
+                    // Security check: prevent zip slip attack
+                    if (!entryPath.startsWith(stagingDir)) {
+                        throw new IOException("ZIP entry is outside of target directory: " + entry.getName());
+                    }
 
-                if (entry.isDirectory()) {
-                    Files.createDirectories(entryPath);
-                } else {
-                    Files.createDirectories(entryPath.getParent());
-                    try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(entryPath), 65536)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            fos.write(buffer, 0, len);
+                    if (entry.isDirectory()) {
+                        Files.createDirectories(entryPath);
+                    } else {
+                        Files.createDirectories(entryPath.getParent());
+                        try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(entryPath), 65536)) {
+                            byte[] buffer = new byte[BUFFER_SIZE];
+                            int len;
+                            while ((len = zis.read(buffer)) > 0) {
+                                fos.write(buffer, 0, len);
+                            }
                         }
                     }
-                }
 
-                zis.closeEntry();
+                    zis.closeEntry();
+                }
+                if (!hasEntries) {
+                    throw new IOException("ZIP archive is empty or invalid: " + zipFile);
+                }
             }
-            if (!hasEntries) {
-                throw new IOException("ZIP archive is empty or invalid: " + zipFile);
+
+            if (Files.isDirectory(normalizedTarget)) {
+                if (Files.isDirectory(backupDir)) {
+                    deleteDirectoryRecursively(backupDir);
+                }
+                Files.move(normalizedTarget, backupDir, StandardCopyOption.REPLACE_EXISTING);
             }
-        } catch (IOException e) {
+
+            try {
+                Files.move(stagingDir, normalizedTarget);
+            } catch (IOException e) {
+                if (Files.isDirectory(backupDir)) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Extraction move failed, rolling back from backup...");
+                    try {
+                        Files.move(backupDir, normalizedTarget, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (IOException rollbackEx) {
+                        SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup!", rollbackEx);
+                    }
+                }
+                throw e;
+            }
+        } finally {
             if (Files.isDirectory(stagingDir)) {
                 deleteDirectoryRecursively(stagingDir);
             }
-            throw e;
-        }
-
-        if (Files.isDirectory(normalizedTarget)) {
             if (Files.isDirectory(backupDir)) {
                 deleteDirectoryRecursively(backupDir);
             }
-            Files.move(normalizedTarget, backupDir, StandardCopyOption.REPLACE_EXISTING);
-        }
-        try {
-            Files.move(stagingDir, normalizedTarget);
-        } catch (IOException e) {
-            if (Files.isDirectory(backupDir)) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Extraction move failed, rolling back from backup...");
-                try {
-                    Files.move(backupDir, normalizedTarget, StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException rollbackEx) {
-                    SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup!", rollbackEx);
-                }
-            }
-            throw e;
-        }
-        if (Files.isDirectory(backupDir)) {
-            deleteDirectoryRecursively(backupDir);
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Extraction complete: {}", worldFolder);

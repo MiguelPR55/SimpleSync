@@ -83,6 +83,7 @@ public class WorldSyncTaskTest {
         Path targetDir = tempDir.resolve("safe_target");
         assertThrows(IOException.class, () -> WorldSyncTask.extractWorld(maliciousZip, targetDir));
         assertFalse(Files.exists(tempDir.resolve("evil.txt")), "Zip-slip attack file should not be extracted!");
+        assertFalse(Files.exists(targetDir.resolveSibling(targetDir.getFileName() + "_staging")), "Staging directory should be cleaned up after zip-slip failure");
     }
 
     @Test
@@ -100,5 +101,7 @@ public class WorldSyncTaskTest {
         assertTrue(Files.exists(worldFolder), "World folder should exist after rollback");
         assertTrue(Files.exists(existingFile), "Original file should exist after rollback");
         assertEquals("original level data", Files.readString(existingFile));
+        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_staging")), "Staging directory should be cleaned up after rollback");
+        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_backup")), "Backup directory should be cleaned up after rollback");
     }
 }
