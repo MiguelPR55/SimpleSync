@@ -25,5 +25,13 @@ public class SimpleSyncClient implements ClientModInitializer {
                 ));
             });
         });
+
+        CloudSyncManager.getInstance().setConflictCancelCallback(() -> {
+            MinecraftClient.getInstance().execute(() -> {
+                if (MinecraftClient.getInstance().currentScreen instanceof dev.simplesync.ui.SyncConflictScreen screen) {
+                    screen.close();
+                }
+            });
+        });
     }
 }

@@ -104,4 +104,32 @@ public class WorldSyncTaskTest {
         assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_staging")), "Staging directory should be cleaned up after rollback");
         assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_backup")), "Backup directory should be cleaned up after rollback");
     }
+
+    @Test
+    void testCleanupOrphanedDirectories() throws IOException {
+        Path savesDir = tempDir.resolve("saves");
+        Files.createDirectories(savesDir);
+
+        Path orphanStaging = savesDir.resolve("TestWorld_staging");
+        Files.createDirectories(orphanStaging);
+        Files.writeString(orphanStaging.resolve("temp.txt"), "staging data");
+
+        Path orphanBackup = savesDir.resolve("RestoredWorld_backup");
+        Files.createDirectories(orphanBackup);
+        Files.writeString(orphanBackup.resolve("level.dat"), "backup level data");
+
+        Path existingWorld = savesDir.resolve("ExistingWorld");
+        Files.createDirectories(existingWorld);
+        Path leftoverBackup = savesDir.resolve("ExistingWorld_backup");
+        Files.createDirectories(leftoverBackup);
+
+        WorldSyncTask.cleanupOrphanedDirectories(savesDir);
+
+        assertFalse(Files.exists(orphanStaging), "Orphaned staging directory should be deleted");
+        assertTrue(Files.exists(savesDir.resolve("RestoredWorld")), "Orphaned backup should be restored to original world name when original is missing");
+        assertEquals("backup level data", Files.readString(savesDir.resolve("RestoredWorld").resolve("level.dat")));
+        assertFalse(Files.exists(orphanBackup), "Backup directory should no longer exist after restore");
+        assertTrue(Files.exists(existingWorld), "Existing world should remain intact");
+        assertFalse(Files.exists(leftoverBackup), "Leftover backup should be deleted when original world already exists");
+    }
 }

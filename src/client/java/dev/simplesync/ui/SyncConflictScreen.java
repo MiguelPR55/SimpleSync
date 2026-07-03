@@ -21,7 +21,7 @@ public class SyncConflictScreen extends Screen {
     private final Runnable onKeepLocal;
     private final String formattedLocalDate;
     private final String formattedCloudDate;
-    private boolean resolved = false;
+    private final java.util.concurrent.atomic.AtomicBoolean resolved = new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public SyncConflictScreen(String worldName, long localTimestamp, long cloudTimestamp,
                               Runnable onUseCloud, Runnable onKeepLocal) {
@@ -45,10 +45,11 @@ public class SyncConflictScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.use_cloud"),
                         button -> {
-                            resolved = true;
-                            CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName);
-                            onUseCloud.run();
-                            this.close();
+                            if (resolved.compareAndSet(false, true)) {
+                                CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName);
+                                onUseCloud.run();
+                                this.close();
+                            }
                         })
                 .dimensions(centerX - buttonWidth - 5, buttonY, buttonWidth, 20)
                 .build());
@@ -56,9 +57,10 @@ public class SyncConflictScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.keep_local"),
                         button -> {
-                            resolved = true;
-                            onKeepLocal.run();
-                            this.close();
+                            if (resolved.compareAndSet(false, true)) {
+                                onKeepLocal.run();
+                                this.close();
+                            }
                         })
                 .dimensions(centerX + 5, buttonY, buttonWidth, 20)
                 .build());
@@ -66,9 +68,10 @@ public class SyncConflictScreen extends Screen {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("simplesync.conflict.cancel"),
                         button -> {
-                            resolved = true;
-                            onKeepLocal.run();
-                            this.close();
+                            if (resolved.compareAndSet(false, true)) {
+                                onKeepLocal.run();
+                                this.close();
+                            }
                         })
                 .dimensions(centerX - 100, buttonY + 30, 200, 20)
                 .build());
@@ -109,8 +112,7 @@ public class SyncConflictScreen extends Screen {
 
     @Override
     public void close() {
-        if (!resolved) {
-            resolved = true;
+        if (resolved.compareAndSet(false, true)) {
             onKeepLocal.run();
         }
         super.close();

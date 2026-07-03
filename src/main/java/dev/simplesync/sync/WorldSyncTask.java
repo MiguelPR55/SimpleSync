@@ -81,6 +81,10 @@ public class WorldSyncTask {
 
                     @Override
                     public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                        String dirName = dir.getFileName().toString();
+                        if (dirName.endsWith("_staging") || dirName.endsWith("_backup")) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
                         String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
                         if (!entryName.isEmpty()) {
                             zos.putNextEntry(new ZipEntry(entryName + "/"));
@@ -175,6 +179,8 @@ public class WorldSyncTask {
                         Files.move(backupDir, normalizedTarget, StandardCopyOption.REPLACE_EXISTING);
                     } catch (IOException rollbackEx) {
                         SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup!", rollbackEx);
+                        e.addSuppressed(rollbackEx);
+                        throw new IOException("Extraction failed and CRITICAL rollback failure occurred: " + rollbackEx.getMessage(), e);
                     }
                 }
                 throw e;
@@ -191,6 +197,49 @@ public class WorldSyncTask {
         SimpleSync.LOGGER.info("[SimpleSync] Extraction complete: {}", worldFolder);
     }
 
+    /**
+     * Scans the saves directory for orphaned _staging and _backup directories left behind by abnormal shutdowns.
+     * Cleans up staging folders and restores or deletes backup folders as appropriate.
+     */
+    public static void cleanupOrphanedDirectories(Path savesDir) {
+        if (!Files.isDirectory(savesDir)) {
+            return;
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(savesDir)) {
+            for (Path entry : stream) {
+                if (!Files.isDirectory(entry)) {
+                    continue;
+                }
+                String name = entry.getFileName().toString();
+                if (name.endsWith("_staging")) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Cleaning up orphaned staging directory: {}", entry);
+                    deleteDirectoryRecursively(entry);
+                } else if (name.endsWith("_backup")) {
+                    String originalName = name.substring(0, name.length() - "_backup".length());
+                    Path originalWorld = savesDir.resolve(originalName);
+                    if (!Files.exists(originalWorld)) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Restoring orphaned backup directory to original world: {} -> {}", entry, originalWorld);
+                        try {
+                            Files.move(entry, originalWorld);
+                        } catch (IOException e) {
+                            SimpleSync.LOGGER.error("[SimpleSync] Failed to restore orphaned backup directory: {}", entry, e);
+                        }
+                    } else {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Cleaning up leftover backup directory: {}", entry);
+                        deleteDirectoryRecursively(entry);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            SimpleSync.LOGGER.error("[SimpleSync] Error during orphaned directories cleanup", e);
+        }
+    }
+
+    /**
+     * Recursively deletes a directory tree.
+     * Note: SimpleFileVisitor does not follow symlinks by default. If symlinks exist within the directory,
+     * the symlink file itself is deleted without affecting or traversing into the target location.
+     */
     private static void deleteDirectoryRecursively(Path directory) throws IOException {
         if (!Files.exists(directory)) return;
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
@@ -229,12 +278,27 @@ public class WorldSyncTask {
         final long[] stats = {0, 0}; // [size, maxTime]
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                long mtime = attrs.lastModifiedTime().toMillis();
+                if (mtime > stats[1]) {
+                    stats[1] = mtime;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 stats[0] += attrs.size();
                 long mtime = attrs.lastModifiedTime().toMillis();
                 if (mtime > stats[1]) {
                     stats[1] = mtime;
                 }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Could not read file attributes during stats check (permissions/symlink): {}", file);
                 return FileVisitResult.CONTINUE;
             }
         });
@@ -250,6 +314,14 @@ public class WorldSyncTask {
     }
 
     public static boolean isLocalWorldModified(Path worldFolder, SyncConfig config, String worldName) throws IOException {
+        return isLocalWorldModified(worldFolder, config, worldName, getWorldStats(worldFolder));
+    }
+
+    /**
+     * Checks if local world is modified using precalculated WorldStats to avoid scanning filesystem twice.
+     * Compares exact size and latest modified time against recorded values.
+     */
+    public static boolean isLocalWorldModified(Path worldFolder, SyncConfig config, String worldName, WorldStats stats) throws IOException {
         if (!Files.isDirectory(worldFolder)) {
             return false;
         }
@@ -261,7 +333,6 @@ public class WorldSyncTask {
             return false;
         }
 
-        WorldStats stats = getWorldStats(worldFolder);
-        return stats.size() != lastSize || Math.abs(stats.latestModifiedTime() - lastMtime) > 2000;
+        return stats.size() != lastSize || stats.latestModifiedTime() != lastMtime;
     }
 }

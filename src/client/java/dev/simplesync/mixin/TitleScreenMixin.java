@@ -5,7 +5,6 @@ import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.config.SyncConfig;
 import net.minecraft.client.gui.screen.TitleScreen;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -17,13 +16,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
 
-    @Unique
-    private static boolean simpleSyncInitialized = false;
-
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
-        if (!simpleSyncInitialized) {
-            simpleSyncInitialized = true;
+        if (SimpleSync.needsTitleScreenSync) {
+            SimpleSync.needsTitleScreenSync = false;
+            dev.simplesync.sync.WorldSyncTask.cleanupOrphanedDirectories(java.nio.file.Path.of("saves"));
 
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnStart) {

@@ -14,8 +14,10 @@ import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
+import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
 
 import java.io.*;
@@ -100,15 +102,37 @@ public class GoogleDriveProvider implements CloudProvider {
 
         File uploadedFile;
         if (existingFileId != null) {
-            uploadedFile = withRetry(() -> driveService.files().update(existingFileId, fileMetadata, mediaContent)
-                    .setFields("id, name, modifiedTime, size")
-                    .execute(), 3);
+            uploadedFile = withRetry(() -> {
+                Drive.Files.Update request = driveService.files().update(existingFileId, fileMetadata, mediaContent)
+                        .setFields("id, name, modifiedTime, size");
+                request.getMediaHttpUploader().setProgressListener(uploader -> {
+                    switch (uploader.getUploadState()) {
+                        case MEDIA_IN_PROGRESS -> {
+                            int percent = (int) (uploader.getProgress() * 100);
+                            CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
+                        }
+                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
+                    }
+                });
+                return request.execute();
+            }, 3);
             SimpleSync.LOGGER.info("[SimpleSync] Updated existing file: {} (ID: {})", fileName, uploadedFile.getId());
         } else {
             fileMetadata.setParents(Collections.singletonList(simpleSyncFolderId));
-            uploadedFile = withRetry(() -> driveService.files().create(fileMetadata, mediaContent)
-                    .setFields("id, name, modifiedTime, size")
-                    .execute(), 3);
+            uploadedFile = withRetry(() -> {
+                Drive.Files.Create request = driveService.files().create(fileMetadata, mediaContent)
+                        .setFields("id, name, modifiedTime, size");
+                request.getMediaHttpUploader().setProgressListener(uploader -> {
+                    switch (uploader.getUploadState()) {
+                        case MEDIA_IN_PROGRESS -> {
+                            int percent = (int) (uploader.getProgress() * 100);
+                            CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
+                        }
+                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
+                    }
+                });
+                return request.execute();
+            }, 3);
             SimpleSync.LOGGER.info("[SimpleSync] Uploaded new file: {} (ID: {})", fileName, uploadedFile.getId());
         }
         if (uploadedFile != null && uploadedFile.getId() != null) {
@@ -137,8 +161,17 @@ public class GoogleDriveProvider implements CloudProvider {
 
         withRetry(() -> {
             try (OutputStream outputStream = Files.newOutputStream(outputZip)) {
-                driveService.files().get(fileId)
-                        .executeMediaAndDownloadTo(outputStream);
+                Drive.Files.Get getRequest = driveService.files().get(fileId);
+                getRequest.getMediaHttpDownloader().setProgressListener(downloader -> {
+                    switch (downloader.getDownloadState()) {
+                        case MEDIA_IN_PROGRESS -> {
+                            int percent = (int) (downloader.getProgress() * 100);
+                            CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (" + percent + "%)");
+                        }
+                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (100%)");
+                    }
+                });
+                getRequest.executeMediaAndDownloadTo(outputStream);
             }
             return null;
         }, 3);
@@ -260,7 +293,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .setPort(-1)
+                .setPort(8888)
                 .build();
 
         Credential credential = new com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp(
@@ -281,6 +314,22 @@ public class GoogleDriveProvider implements CloudProvider {
 
             Credential cred = flow.loadCredential("user");
             if (cred != null && (cred.getRefreshToken() != null || cred.getAccessToken() != null)) {
+                Long expiresIn = cred.getExpiresInSeconds();
+                if (expiresIn != null && expiresIn <= 60) {
+                    if (cred.getRefreshToken() == null) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Access token has expired and no refresh token is available.");
+                        return false;
+                    }
+                    try {
+                        if (!cred.refreshToken()) {
+                            SimpleSync.LOGGER.warn("[SimpleSync] Failed to refresh expired access token.");
+                            return false;
+                        }
+                    } catch (Exception e) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Exception refreshing access token offline: {}", e.getMessage());
+                        return false;
+                    }
+                }
                 driveService = new Drive.Builder(transport, JSON_FACTORY, cred)
                         .setApplicationName(APPLICATION_NAME)
                         .build();
@@ -305,7 +354,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
     }
 
-    private void ensureSimpleSyncFolder() throws IOException {
+    private synchronized void ensureSimpleSyncFolder() throws IOException {
         if (simpleSyncFolderId != null) {
             return;
         }
@@ -343,7 +392,7 @@ public class GoogleDriveProvider implements CloudProvider {
         config.save();
     }
 
-    private String findFileId(String fileName) throws IOException {
+    private synchronized String findFileId(String fileName) throws IOException {
         if (fileIdCache.containsKey(fileName)) {
             return fileIdCache.get(fileName);
         }
@@ -368,7 +417,7 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     private String escapeQueryString(String str) {
-        return str != null ? str.replace("'", "\\'") : "";
+        return str != null ? str.replace("\\", "\\\\").replace("'", "\\'") : "";
     }
 
     private <T> T withRetry(Callable<T> action, int maxAttempts) throws IOException {
@@ -377,6 +426,13 @@ public class GoogleDriveProvider implements CloudProvider {
             try {
                 return action.call();
             } catch (IOException e) {
+                if (e instanceof GoogleJsonResponseException jsonEx) {
+                    int statusCode = jsonEx.getStatusCode();
+                    if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429) {
+                        SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, e.getMessage());
+                        throw e;
+                    }
+                }
                 lastError = e;
                 SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
                 try { Thread.sleep(1000L * (1L << (attempt - 1))); } catch (InterruptedException ignored) {}
