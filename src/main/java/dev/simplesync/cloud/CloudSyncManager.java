@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -142,6 +143,9 @@ public class CloudSyncManager {
                                         conflictCancelCallback.run();
                                     }
                                     useCloud = false;
+                                } catch (ExecutionException ee) {
+                                    SimpleSync.LOGGER.error("[SimpleSync] Error during conflict resolution for world '{}'", worldName, ee.getCause());
+                                    useCloud = false;
                                 } catch (InterruptedException ie) {
                                     SimpleSync.LOGGER.warn("[SimpleSync] Sync interrupted during conflict resolution for world '{}'", worldName);
                                     Thread.currentThread().interrupt();
@@ -235,8 +239,8 @@ public class CloudSyncManager {
                     WorldSyncTask.compressWorld(worldFolder, tempZip);
 
                     long zipSize = Files.size(tempZip);
-                    if (zipSize > 10L * 1024 * 1024 * 1024) {
-                        throw new IOException("Compressed world exceeds maximum supported size (10 GB): " + zipSize + " bytes");
+                    if (zipSize > 50L * 1024 * 1024 * 1024) {
+                        throw new IOException("Compressed world exceeds maximum supported size (50 GB): " + zipSize + " bytes");
                     }
 
                     setStatus(SyncStatus.UPLOADING, worldName);
@@ -307,7 +311,7 @@ public class CloudSyncManager {
 
     // ─── Path Helpers ────────────────────────────────────────────────────────
 
-    private Path getSavesDirectory() {
+    public Path getSavesDirectory() {
         if (savesDirectory == null) {
             savesDirectory = Path.of("saves");
         }

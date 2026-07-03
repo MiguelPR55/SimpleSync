@@ -62,11 +62,35 @@ public class GoogleDriveProvider implements CloudProvider {
     public boolean isAuthenticated() {
         try {
             if (driveService != null) {
-                return true;
+                // Verify the credential is still usable
+                return verifyDriveServiceCredential();
             }
             return initializeDriveServiceOffline();
         } catch (Exception e) {
             SimpleSync.LOGGER.error("[SimpleSync] Error checking authentication status", e);
+            return false;
+        }
+    }
+
+    /**
+     * Verifies that the current driveService has a valid (or refreshable) credential.
+     */
+    private boolean verifyDriveServiceCredential() {
+        try {
+            Credential cred = driveService.getRequestFactory().getInitializer() instanceof Credential c ? c : null;
+            if (cred == null) {
+                return true; // Cannot inspect, assume valid
+            }
+            Long expiresIn = cred.getExpiresInSeconds();
+            if (expiresIn != null && expiresIn <= 60) {
+                if (cred.getRefreshToken() != null) {
+                    return cred.refreshToken();
+                }
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Failed to verify credential: {}", e.getMessage());
             return false;
         }
     }
@@ -190,32 +214,42 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = String.format("'%s' in parents and mimeType='%s' and trashed=false",
                 simpleSyncFolderId, ZIP_MIME_TYPE);
 
-        FileList result = withRetry(() -> driveService.files().list()
-                .setQ(query)
-                .setFields("files(id, name, modifiedTime, size)")
-                .setOrderBy("modifiedTime desc")
-                .execute(), 3);
+        String pageToken = null;
+        do {
+            final String currentPageToken = pageToken;
+            FileList result = withRetry(() -> driveService.files().list()
+                    .setQ(query)
+                    .setFields("nextPageToken, files(id, name, modifiedTime, size)")
+                    .setPageSize(1000)
+                    .setPageToken(currentPageToken)
+                    .setOrderBy("modifiedTime desc")
+                    .execute(), 3);
 
-        if (result == null || result.getFiles() == null) {
-            return worlds;
-        }
-
-        for (File file : result.getFiles()) {
-            if (file.getName() != null && file.getId() != null) {
-                fileIdCache.put(file.getName(), file.getId());
-            }
-            String worldName = file.getName();
-            if (worldName.endsWith(".zip")) {
-                worldName = worldName.substring(0, worldName.length() - 4);
+            if (result == null || result.getFiles() == null) {
+                break;
             }
 
-            worlds.add(new WorldMetadata(
-                    worldName,
-                    file.getModifiedTime().getValue(),
-                    file.getSize() != null ? file.getSize() : 0,
-                    file.getId()
-            ));
-        }
+            for (File file : result.getFiles()) {
+                if (file.getName() != null && file.getId() != null) {
+                    fileIdCache.put(file.getName(), file.getId());
+                }
+                String worldName = file.getName();
+                if (worldName.endsWith(".zip")) {
+                    worldName = worldName.substring(0, worldName.length() - 4);
+                }
+
+                long modifiedTime = (file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis();
+
+                worlds.add(new WorldMetadata(
+                        worldName,
+                        modifiedTime,
+                        file.getSize() != null ? file.getSize() : 0,
+                        file.getId()
+                ));
+            }
+
+            pageToken = result.getNextPageToken();
+        } while (pageToken != null);
 
         return worlds;
     }
@@ -470,7 +504,14 @@ public class GoogleDriveProvider implements CloudProvider {
                 }
                 lastError = e;
                 SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                try { Thread.sleep(1000L * (1L << (attempt - 1))); } catch (InterruptedException ignored) {}
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(1000L * (1L << (attempt - 1)));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw lastError;
+                    }
+                }
             } catch (Exception e) {
                 throw new IOException(e);
             }

@@ -17,6 +17,7 @@ import java.util.zip.ZipOutputStream;
 public class WorldSyncTask {
 
     private static final int BUFFER_SIZE = 8192;
+    private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB — large modded worlds can be very big
 
     /**
      * Compresses a world folder into a ZIP file.
@@ -54,7 +55,10 @@ public class WorldSyncTask {
                     } else {
                         try {
                             Thread.sleep(100);
-                        } catch (InterruptedException ignored) {}
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
                     }
                 }
             }
@@ -155,6 +159,7 @@ public class WorldSyncTask {
                  ZipInputStream zis = new ZipInputStream(fis)) {
 
                 boolean hasEntries = false;
+                long totalExtracted = 0;
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     hasEntries = true;
@@ -173,6 +178,11 @@ public class WorldSyncTask {
                             byte[] buffer = new byte[BUFFER_SIZE];
                             int len;
                             while ((len = zis.read(buffer)) > 0) {
+                                totalExtracted += len;
+                                if (totalExtracted > MAX_EXTRACT_SIZE) {
+                                    throw new IOException("Extraction aborted: uncompressed data exceeds maximum allowed size ("
+                                            + (MAX_EXTRACT_SIZE / (1024 * 1024 * 1024)) + " GB). Possible zip bomb.");
+                                }
                                 fos.write(buffer, 0, len);
                             }
                         }
@@ -265,9 +275,14 @@ public class WorldSyncTask {
      */
     private static void deleteDirectoryRecursively(Path directory) throws IOException {
         if (!Files.exists(directory)) return;
+        Path normalizedRoot = directory.toAbsolutePath().normalize();
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                // Safety: ensure we only delete files within the expected directory
+                if (!file.toAbsolutePath().normalize().startsWith(normalizedRoot)) {
+                    throw new IOException("Refusing to delete file outside target directory: " + file);
+                }
                 deleteWithRetry(file);
                 return FileVisitResult.CONTINUE;
             }
@@ -287,7 +302,10 @@ public class WorldSyncTask {
                 break;
             } catch (IOException e) {
                 if (i == 2) throw e;
-                try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(50); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
             }
         }
     }

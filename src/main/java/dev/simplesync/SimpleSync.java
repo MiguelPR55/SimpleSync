@@ -9,11 +9,14 @@ import dev.simplesync.config.SyncConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.Desktop;
+import java.net.URI;
+
 public class SimpleSync implements ModInitializer {
     public static final String MOD_ID = "simplesync";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    private static String lastWorldName = null;
+    private static volatile String lastWorldName = null;
     public static volatile boolean needsTitleScreenSync = true;
 
     @Override
@@ -49,21 +52,25 @@ public class SimpleSync implements ModInitializer {
     }
 
     public static void openUrl(String url) {
+        // Security: Only allow http/https URLs to prevent arbitrary URI scheme attacks
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            LOGGER.warn("[SimpleSync] Refused to open URL with disallowed scheme: {}", url);
+            return;
+        }
+
         try {
-            String os = System.getProperty("os.name").toLowerCase();
-            if (os.contains("win")) {
-                Runtime.getRuntime().exec(new String[]{"cmd", "/c", "start", url});
-            } else if (os.contains("mac")) {
-                Runtime.getRuntime().exec(new String[]{"open", url});
+            URI uri = URI.create(url);
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(uri);
             } else {
-                // Linux / Unix - spawn process directly which works reliably inside Flatpak sandbox
-                Runtime.getRuntime().exec(new String[]{"xdg-open", url});
+                // Fallback to Minecraft's built-in utility
+                net.minecraft.util.Util.getOperatingSystem().open(uri);
             }
-            LOGGER.info("[SimpleSync] Successfully opened URL in browser using OS command: {}", url);
+            LOGGER.info("[SimpleSync] Opened URL in browser: {}", url);
         } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Failed to open URL via OS command, falling back to Minecraft Util API: {}", e.getMessage());
+            LOGGER.warn("[SimpleSync] Failed to open URL via Desktop API, falling back to Minecraft Util API: {}", e.getMessage());
             try {
-                net.minecraft.util.Util.getOperatingSystem().open(java.net.URI.create(url));
+                net.minecraft.util.Util.getOperatingSystem().open(URI.create(url));
             } catch (Exception ex) {
                 LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);
             }

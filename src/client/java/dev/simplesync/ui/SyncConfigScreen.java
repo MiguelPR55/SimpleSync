@@ -98,7 +98,6 @@ public class SyncConfigScreen extends Screen {
 
         // Google Drive Account Sync/Authentication Button
         boolean authenticated = CloudSyncManager.getInstance().getProvider().isAuthenticated();
-        boolean hasSecret = true;
 
         Text authBtnText;
         if (authenticating) {
@@ -126,8 +125,7 @@ public class SyncConfigScreen extends Screen {
         .dimensions(centerX - 100, centerY + 20, 200, 20)
         .build();
 
-        // Enable connection only if client_secret exists and we aren't already authenticating
-        connectBtn.active = (hasSecret || authenticated) && !authenticating;
+        connectBtn.active = !authenticating;
         this.addDrawableChild(connectBtn);
 
         // Help / Setup Tutorial Button
@@ -216,7 +214,6 @@ public class SyncConfigScreen extends Screen {
 
         // Render connection status message
         boolean authenticated = CloudSyncManager.getInstance().getProvider().isAuthenticated();
-        boolean hasSecret = true;
 
         Text statusTextVal;
         int statusColor;
@@ -227,9 +224,6 @@ public class SyncConfigScreen extends Screen {
         } else if (authenticated) {
             statusTextVal = Text.translatable("simplesync.config.status.connected");
             statusColor = 0x81C784; // Green
-        } else if (!hasSecret) {
-            statusTextVal = Text.translatable("simplesync.config.status.missing_secret");
-            statusColor = 0xE57373; // Red
         } else {
             statusTextVal = Text.translatable("simplesync.config.status.disconnected");
             statusColor = 0xFFD54F; // Yellow
