@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.Desktop;
 import java.net.URI;
+import java.util.Locale;
 
 public class SimpleSync implements ModInitializer {
     public static final String MOD_ID = "simplesync";
@@ -52,14 +53,20 @@ public class SimpleSync implements ModInitializer {
     }
 
     public static void openUrl(String url) {
-        // Security: Only allow http/https URLs to prevent arbitrary URI scheme attacks
-        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
-            LOGGER.warn("[SimpleSync] Refused to open URL with disallowed scheme: {}", url);
-            return;
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (Exception e) {
+            LOGGER.warn("[SimpleSync] Refused to open malformed URL: {}", url);
+            throw new IllegalArgumentException("Malformed OAuth URL", e);
+        }
+
+        if (!isAllowedGoogleUrl(uri)) {
+            LOGGER.warn("[SimpleSync] Refused to open unexpected Google URL: {}", url);
+            throw new IllegalArgumentException("Unexpected Google URL host or scheme");
         }
 
         try {
-            URI uri = URI.create(url);
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                 Desktop.getDesktop().browse(uri);
             } else {
@@ -70,10 +77,20 @@ public class SimpleSync implements ModInitializer {
         } catch (Exception e) {
             LOGGER.warn("[SimpleSync] Failed to open URL via Desktop API, falling back to Minecraft Util API: {}", e.getMessage());
             try {
-                net.minecraft.util.Util.getOperatingSystem().open(URI.create(url));
+                net.minecraft.util.Util.getOperatingSystem().open(uri);
             } catch (Exception ex) {
                 LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);
             }
         }
+    }
+
+    private static boolean isAllowedGoogleUrl(URI uri) {
+        if (uri == null || uri.getScheme() == null || uri.getHost() == null) {
+            return false;
+        }
+        String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        return "https".equals(scheme)
+                && ("accounts.google.com".equals(host) || "console.cloud.google.com".equals(host));
     }
 }

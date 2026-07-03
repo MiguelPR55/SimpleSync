@@ -182,9 +182,13 @@ public class GoogleDriveProvider implements CloudProvider {
         SimpleSync.LOGGER.info("[SimpleSync] Downloading {} from Google Drive...", fileName);
 
         Files.createDirectories(outputZip.getParent());
+        if (Files.isSymbolicLink(outputZip)) {
+            throw new IOException("Refusing to write download through symbolic link: " + outputZip);
+        }
 
         withRetry(() -> {
-            try (OutputStream outputStream = Files.newOutputStream(outputZip)) {
+            Files.deleteIfExists(outputZip);
+            try (OutputStream outputStream = Files.newOutputStream(outputZip, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
                 Drive.Files.Get getRequest = driveService.files().get(fileId);
                 getRequest.getMediaHttpDownloader().setProgressListener(downloader -> {
                     switch (downloader.getDownloadState()) {
@@ -299,6 +303,9 @@ public class GoogleDriveProvider implements CloudProvider {
         driveService = null;
         simpleSyncFolderId = null;
         fileIdCache.clear();
+        if (Files.isSymbolicLink(credentialsDir)) {
+            throw new IOException("Refusing to clear symlinked credentials directory: " + credentialsDir);
+        }
         if (Files.isDirectory(credentialsDir)) {
             try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(credentialsDir)) {
                 for (Path entry : stream) {
@@ -321,21 +328,16 @@ public class GoogleDriveProvider implements CloudProvider {
                 secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
             }
         } else {
-            // Use bundled client credentials (split to prevent GitHub Push Protection triggers)
-            String clientId = "10987" + "12128197-9t" + "uu8k5n05poj9p" + "0q237bq87g5tf" + "u1rk.apps.goo" + "gleusercontent.com";
-            String clientSecret = "GOC" + "SPX-pb-jq6O" + "Fyzn04uuR2Gsm" + "kiyJe_uX";
-            
-            GoogleClientSecrets.Details details = new GoogleClientSecrets.Details();
-            details.setClientId(clientId);
-            details.setClientSecret(clientSecret);
-            details.setAuthUri("https://accounts.google.com/o/oauth2/auth");
-            details.setTokenUri("https://oauth2.googleapis.com/token");
-            details.setRedirectUris(Collections.singletonList("http://localhost"));
-            
-            secrets = new GoogleClientSecrets();
-            secrets.setInstalled(details);
+            return null;
         }
 
+        if (secrets.getInstalled() == null && secrets.getWeb() == null) {
+            throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
+        }
+
+        if (Files.isSymbolicLink(credentialsDir)) {
+            throw new IOException("Refusing to use symlinked credentials directory: " + credentialsDir);
+        }
         Files.createDirectories(credentialsDir);
         return new GoogleAuthorizationCodeFlow.Builder(transport, JSON_FACTORY, secrets, SCOPES)
                 .setDataStoreFactory(new FileDataStoreFactory(credentialsDir.toFile()))

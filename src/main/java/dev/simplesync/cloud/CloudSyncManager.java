@@ -105,7 +105,7 @@ public class CloudSyncManager {
                 for (WorldMetadata cloudWorld : cloudWorlds) {
                     try {
                         String worldName = cloudWorld.worldName();
-                        if (worldName == null || worldName.contains("..") || worldName.contains("/") || worldName.contains("\\") || worldName.indexOf('\0') >= 0) {
+                        if (!WorldSyncTask.isWorldNameSafe(worldName)) {
                             SimpleSync.LOGGER.warn("[SimpleSync] Security violation: ignoring cloud world with unsafe name '{}'", worldName);
                             continue;
                         }
@@ -205,7 +205,7 @@ public class CloudSyncManager {
     public CompletableFuture<Void> uploadWorldAsync(String worldName) {
         return CompletableFuture.runAsync(() -> {
             try {
-                if (worldName == null || worldName.contains("..") || worldName.contains("/") || worldName.contains("\\") || worldName.indexOf('\0') >= 0) {
+                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Security violation: invalid world name '{}'", worldName);
                     setStatus(SyncStatus.ERROR, "Invalid world name");
                     return;
@@ -320,6 +320,9 @@ public class CloudSyncManager {
 
     private Path getTempDir() throws IOException {
         Path tempDir = SyncConfig.getConfigDir().resolve("temp");
+        if (Files.isSymbolicLink(tempDir)) {
+            throw new IOException("Refusing to use symlinked temp directory: " + tempDir);
+        }
         Files.createDirectories(tempDir);
         return tempDir;
     }

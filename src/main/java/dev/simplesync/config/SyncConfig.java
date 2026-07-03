@@ -55,31 +55,61 @@ public class SyncConfig {
             Path configFile = getConfigDir().resolve(CONFIG_FILE);
             Path tempFile = getConfigDir().resolve(CONFIG_FILE + ".tmp");
 
-            try {
-                Files.deleteIfExists(tempFile);
-            } catch (IOException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
+            SyncConfig config = tryLoadFile(configFile);
+            if (config == null && Files.exists(tempFile)) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Main config failed to load or missing, attempting to recover from temp config file...");
+                config = tryLoadFile(tempFile);
+            }
+
+            if (config != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException e) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
+                }
+                return config;
             }
 
             if (Files.exists(configFile)) {
                 try {
-                    String json = Files.readString(configFile);
-                    SyncConfig config = GSON.fromJson(json, SyncConfig.class);
-                    if (config != null) {
-                        config.lastSyncTimestamps = config.lastSyncTimestamps == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastSyncTimestamps);
-                        config.lastLocalSizes = config.lastLocalSizes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalSizes);
-                        config.lastLocalMtimes = config.lastLocalMtimes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalMtimes);
-                        return config;
-                    }
-                } catch (Exception e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to load config, using defaults", e);
+                    Path corruptFile = getConfigDir().resolve(CONFIG_FILE + ".corrupted");
+                    Files.move(configFile, corruptFile, StandardCopyOption.REPLACE_EXISTING);
+                    SimpleSync.LOGGER.error("[SimpleSync] Config file was corrupted and has been backed up to: {}", corruptFile);
+                } catch (IOException e) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Failed to back up corrupted config file", e);
                 }
             }
 
-            SyncConfig config = new SyncConfig();
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException ignored) {}
+
+            config = new SyncConfig();
             config.save();
             return config;
         }
+    }
+
+    private static SyncConfig tryLoadFile(Path file) {
+        if (!Files.exists(file) || !Files.isRegularFile(file)) {
+            return null;
+        }
+        try {
+            if (Files.size(file) == 0) {
+                return null;
+            }
+            String json = Files.readString(file);
+            SyncConfig config = GSON.fromJson(json, SyncConfig.class);
+            if (config != null) {
+                config.lastSyncTimestamps = config.lastSyncTimestamps == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastSyncTimestamps);
+                config.lastLocalSizes = config.lastLocalSizes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalSizes);
+                config.lastLocalMtimes = config.lastLocalMtimes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalMtimes);
+                return config;
+            }
+        } catch (Exception e) {
+            SimpleSync.LOGGER.error("[SimpleSync] Failed to load config from {}", file, e);
+        }
+        return null;
     }
 
     /**

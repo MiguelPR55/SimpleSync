@@ -11,10 +11,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Enumeration;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 public class WorldSyncTaskTest {
 
@@ -84,6 +87,57 @@ public class WorldSyncTaskTest {
         assertThrows(IOException.class, () -> WorldSyncTask.extractWorld(maliciousZip, targetDir));
         assertFalse(Files.exists(tempDir.resolve("evil.txt")), "Zip-slip attack file should not be extracted!");
         assertFalse(Files.exists(targetDir.resolveSibling(targetDir.getFileName() + "_staging")), "Staging directory should be cleaned up after zip-slip failure");
+    }
+
+    @Test
+    void testExtractWorld_RejectsWindowsAbsoluteEntry() throws IOException {
+        Path maliciousZip = tempDir.resolve("windows-absolute.zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(maliciousZip.toFile()))) {
+            ZipEntry entry = new ZipEntry("C:/Users/Public/evil.txt");
+            zos.putNextEntry(entry);
+            zos.write("bad".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        assertThrows(IOException.class, () -> WorldSyncTask.extractWorld(maliciousZip, tempDir.resolve("safe_target")));
+    }
+
+    @Test
+    void testCompressWorld_SkipsSymlinkFiles() throws IOException {
+        Path outsideSecret = tempDir.resolve("outside-secret.txt");
+        Files.writeString(outsideSecret, "do not upload");
+        Path symlink = worldFolder.resolve("linked-secret.txt");
+
+        try {
+            Files.createSymbolicLink(symlink, outsideSecret);
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            assumeTrue(false, "Symbolic links are not available in this test environment");
+        }
+
+        Path zip = tempDir.resolve("world.zip");
+        WorldSyncTask.compressWorld(worldFolder, zip);
+
+        try (ZipFile zipFile = new ZipFile(zip.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                assertNotEquals("linked-secret.txt", entries.nextElement().getName());
+            }
+        }
+    }
+
+    @Test
+    void testCompressWorld_RejectsSymlinkOutputZip() throws IOException {
+        Path outsideTarget = tempDir.resolve("outside-target.zip");
+        Path symlinkOutput = tempDir.resolve("linked-output.zip");
+
+        try {
+            Files.createSymbolicLink(symlinkOutput, outsideTarget);
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            assumeTrue(false, "Symbolic links are not available in this test environment");
+        }
+
+        assertThrows(IOException.class, () -> WorldSyncTask.compressWorld(worldFolder, symlinkOutput));
+        assertFalse(Files.exists(outsideTarget), "Compression must not write through a symlinked output path");
     }
 
     @Test
