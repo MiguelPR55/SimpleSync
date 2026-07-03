@@ -5,7 +5,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -38,7 +37,8 @@ public class WorldSyncTaskTest {
 
     @Test
     void testIsLocalWorldModified_FirstSyncReturnsTrue() throws IOException {
-        // When lastSize == 0 && lastMtime == 0 (no tracking or first sync), should return true to trigger initial upload
+        // When lastSize == 0 && lastMtime == 0 (no tracking or first sync), should
+        // return true to trigger initial upload
         assertTrue(WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName));
     }
 
@@ -86,7 +86,8 @@ public class WorldSyncTaskTest {
         Path targetDir = tempDir.resolve("safe_target");
         assertThrows(IOException.class, () -> WorldSyncTask.extractWorld(maliciousZip, targetDir));
         assertFalse(Files.exists(tempDir.resolve("evil.txt")), "Zip-slip attack file should not be extracted!");
-        assertFalse(Files.exists(targetDir.resolveSibling(targetDir.getFileName() + "_staging")), "Staging directory should be cleaned up after zip-slip failure");
+        assertFalse(Files.exists(targetDir.resolveSibling(targetDir.getFileName() + "_staging")),
+                "Staging directory should be cleaned up after zip-slip failure");
     }
 
     @Test
@@ -155,8 +156,10 @@ public class WorldSyncTaskTest {
         assertTrue(Files.exists(worldFolder), "World folder should exist after rollback");
         assertTrue(Files.exists(existingFile), "Original file should exist after rollback");
         assertEquals("original level data", Files.readString(existingFile));
-        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_staging")), "Staging directory should be cleaned up after rollback");
-        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_backup")), "Backup directory should be cleaned up after rollback");
+        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_staging")),
+                "Staging directory should be cleaned up after rollback");
+        assertFalse(Files.exists(worldFolder.resolveSibling(worldFolder.getFileName() + "_backup")),
+                "Backup directory should be cleaned up after rollback");
     }
 
     @Test
@@ -180,10 +183,12 @@ public class WorldSyncTaskTest {
         WorldSyncTask.cleanupOrphanedDirectories(savesDir);
 
         assertFalse(Files.exists(orphanStaging), "Orphaned staging directory should be deleted");
-        assertTrue(Files.exists(savesDir.resolve("RestoredWorld")), "Orphaned backup should be restored to original world name when original is missing");
+        assertTrue(Files.exists(savesDir.resolve("RestoredWorld")),
+                "Orphaned backup should be restored to original world name when original is missing");
         assertEquals("backup level data", Files.readString(savesDir.resolve("RestoredWorld").resolve("level.dat")));
         assertFalse(Files.exists(orphanBackup), "Backup directory should no longer exist after restore");
         assertTrue(Files.exists(existingWorld), "Existing world should remain intact");
-        assertFalse(Files.exists(leftoverBackup), "Leftover backup should be deleted when original world already exists");
+        assertFalse(Files.exists(leftoverBackup),
+                "Leftover backup should be deleted when original world already exists");
     }
 }
