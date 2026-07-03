@@ -7,8 +7,9 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 /**
  * Screen shown when there is a conflict between the local and cloud versions of a world.
@@ -30,10 +31,11 @@ public class SyncConflictScreen extends Screen {
         this.onUseCloud = onUseCloud;
         this.onKeepLocal = onKeepLocal;
 
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault());
         String unknownText = Text.translatable("simplesync.conflict.unknown").getString();
-        this.formattedLocalDate = localTimestamp > 0 ? sdf.format(new Date(localTimestamp)) : unknownText;
-        this.formattedCloudDate = cloudTimestamp > 0 ? sdf.format(new Date(cloudTimestamp)) : unknownText;
+        this.formattedLocalDate = localTimestamp > 0 ? dtf.format(Instant.ofEpochMilli(localTimestamp)) : unknownText;
+        this.formattedCloudDate = cloudTimestamp > 0 ? dtf.format(Instant.ofEpochMilli(cloudTimestamp)) : unknownText;
     }
 
     @Override

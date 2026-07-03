@@ -236,7 +236,24 @@ public class CloudSyncManager {
                     }
 
                     setStatus(SyncStatus.UPLOADING, worldName);
-                    WorldMetadata uploadedMeta = cloud.upload(worldName, tempZip);
+                    WorldMetadata uploadedMeta;
+                    try {
+                        uploadedMeta = cloud.upload(worldName, tempZip);
+                    } catch (IOException uploadEx) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Upload failed/timed out. Verifying if file reached cloud: {}", uploadEx.getMessage());
+                        try {
+                            WorldMetadata remoteMeta = cloud.getWorldMetadata(worldName);
+                            if (remoteMeta != null && remoteMeta.sizeBytes() == zipSize) {
+                                SimpleSync.LOGGER.info("[SimpleSync] Verified that the remote file size matches the local ZIP. Considering upload successful.");
+                                uploadedMeta = remoteMeta;
+                            } else {
+                                throw uploadEx;
+                            }
+                        } catch (Exception verifyEx) {
+                            SimpleSync.LOGGER.error("[SimpleSync] Failed to verify remote file status", verifyEx);
+                            throw uploadEx;
+                        }
+                    }
 
                     long newTimestamp = uploadedMeta != null && uploadedMeta.lastModified() > 0 ? uploadedMeta.lastModified() : System.currentTimeMillis();
                     config.setLastSyncTimestamp(worldName, newTimestamp);

@@ -34,7 +34,16 @@ public class WorldSyncTask {
 
         // Delete session.lock if it exists (prevents issues during sync, retry for Windows handles)
         Path sessionLock = worldFolder.resolve("session.lock");
+        Path sessionLockBackup = worldFolder.resolve("session.lock.backup");
+        boolean backedUpLock = false;
         if (Files.exists(sessionLock)) {
+            try {
+                Files.copy(sessionLock, sessionLockBackup, StandardCopyOption.REPLACE_EXISTING);
+                backedUpLock = true;
+            } catch (IOException e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Could not back up session.lock, proceeding directly: {}", e.getMessage());
+            }
+
             for (int i = 0; i < 5; i++) {
                 try {
                     Files.delete(sessionLock);
@@ -60,7 +69,8 @@ public class WorldSyncTask {
                 Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        if (file.getFileName().toString().equals("session.lock")) {
+                        String name = file.getFileName().toString();
+                        if (name.equals("session.lock") || name.equals("session.lock.backup")) {
                             return FileVisitResult.CONTINUE;
                         }
 
@@ -95,11 +105,22 @@ public class WorldSyncTask {
                 });
             }
         } catch (Exception e) {
+            if (backedUpLock) {
+                try {
+                    Files.move(sessionLockBackup, sessionLock, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException restoreEx) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Failed to restore session.lock after compression failure", restoreEx);
+                }
+            }
             try {
                 Files.deleteIfExists(outputZip);
             } catch (IOException ignored) {}
             if (e instanceof IOException ioe) throw ioe;
             throw new IOException("Compression failed", e);
+        } finally {
+            try {
+                Files.deleteIfExists(sessionLockBackup);
+            } catch (IOException ignored) {}
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Compression complete: {}", outputZip);

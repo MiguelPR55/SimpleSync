@@ -53,6 +53,13 @@ public class SyncConfig {
     public static SyncConfig load() {
         synchronized (FILE_LOCK) {
             Path configFile = getConfigDir().resolve(CONFIG_FILE);
+            Path tempFile = getConfigDir().resolve(CONFIG_FILE + ".tmp");
+
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
+            }
 
             if (Files.exists(configFile)) {
                 try {
