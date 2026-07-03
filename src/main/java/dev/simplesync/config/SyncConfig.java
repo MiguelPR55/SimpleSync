@@ -93,12 +93,35 @@ public class SyncConfig {
         }
     }
 
-    public long getLastSyncTimestamp(String w) { return lastSyncTimestamps.getOrDefault(w, 0L); }
-    public void setLastSyncTimestamp(String w, long ts) { lastSyncTimestamps.put(w, ts); }
-    public long getLastLocalSize(String w) { return lastLocalSizes.getOrDefault(w, 0L); }
-    public void setLastLocalSize(String w, long sz) { lastLocalSizes.put(w, sz); }
-    public long getLastLocalMtime(String w) { return lastLocalMtimes.getOrDefault(w, 0L); }
-    public void setLastLocalMtime(String w, long mt) { lastLocalMtimes.put(w, mt); }
-    public String getSimpleSyncFolderId() { return simpleSyncFolderId; }
-    public void setSimpleSyncFolderId(String id) { this.simpleSyncFolderId = id; }
+    public long getLastSyncTimestamp(String worldName) {
+        return lastSyncTimestamps.getOrDefault(worldName, 0L);
+    }
+
+    public void setLastSyncTimestamp(String worldName, long timestamp) {
+        lastSyncTimestamps.put(worldName, timestamp);
+    }
+
+    public long getLastLocalSize(String worldName) {
+        return lastLocalSizes.getOrDefault(worldName, 0L);
+    }
+
+    public void setLastLocalSize(String worldName, long size) {
+        lastLocalSizes.put(worldName, size);
+    }
+
+    public long getLastLocalMtime(String worldName) {
+        return lastLocalMtimes.getOrDefault(worldName, 0L);
+    }
+
+    public void setLastLocalMtime(String worldName, long mtime) {
+        lastLocalMtimes.put(worldName, mtime);
+    }
+
+    public String getSimpleSyncFolderId() {
+        return simpleSyncFolderId;
+    }
+
+    public void setSimpleSyncFolderId(String folderId) {
+        this.simpleSyncFolderId = folderId;
+    }
 }

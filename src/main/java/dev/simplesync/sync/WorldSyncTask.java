@@ -239,8 +239,13 @@ public class WorldSyncTask {
         return new WorldStats(stats[0], stats[1]);
     }
 
-    public static long getDirectorySize(Path dir) throws IOException { return getWorldStats(dir).size(); }
-    public static long getLatestModifiedTime(Path dir) throws IOException { return getWorldStats(dir).latestModifiedTime(); }
+    public static long getDirectorySize(Path directory) throws IOException {
+        return getWorldStats(directory).size();
+    }
+
+    public static long getLatestModifiedTime(Path directory) throws IOException {
+        return getWorldStats(directory).latestModifiedTime();
+    }
 
     public static boolean isLocalWorldModified(Path worldFolder, SyncConfig config, String worldName) throws IOException {
         if (!Files.isDirectory(worldFolder)) {

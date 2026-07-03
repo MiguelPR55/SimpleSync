@@ -33,8 +33,13 @@ public class CloudSyncManager {
     private Path savesDirectory;
     private ConflictCallback conflictCallback;
 
-    public void setConflictCallback(ConflictCallback callback) { this.conflictCallback = callback; }
-    public void setSavesDirectory(Path savesDirectory) { this.savesDirectory = savesDirectory; }
+    public void setConflictCallback(ConflictCallback callback) {
+        this.conflictCallback = callback;
+    }
+
+    public void setSavesDirectory(Path savesDirectory) {
+        this.savesDirectory = savesDirectory;
+    }
 
     private CloudSyncManager() {
         this.executor = Executors.newSingleThreadExecutor(r -> {
@@ -51,12 +56,16 @@ public class CloudSyncManager {
     }
 
     public static synchronized CloudSyncManager getInstance() {
-        if (instance == null) instance = new CloudSyncManager();
+        if (instance == null) {
+            instance = new CloudSyncManager();
+        }
         return instance;
     }
 
     public CloudProvider getProvider() {
-        if (provider == null) provider = new GoogleDriveProvider();
+        if (provider == null) {
+            provider = new GoogleDriveProvider();
+        }
         return provider;
     }
 
@@ -206,21 +215,39 @@ public class CloudSyncManager {
 
     // ─── Status Management ──────────────────────────────────────────────────
 
-    public StatusSnapshot getStatusSnapshot() { return status.get(); }
-    public SyncStatus getStatus() { return status.get().status(); }
-    public String getStatusMessage() { return status.get().detail(); }
-    public long getStatusTimestamp() { return status.get().timestamp(); }
+    public StatusSnapshot getStatusSnapshot() {
+        return status.get();
+    }
+
+    public SyncStatus getStatus() {
+        return status.get().status();
+    }
+
+    public String getStatusMessage() {
+        return status.get().detail();
+    }
+
+    public long getStatusTimestamp() {
+        return status.get().timestamp();
+    }
 
     public void setStatus(SyncStatus status, String detail) {
         this.status.set(new StatusSnapshot(status, detail != null ? detail : "", System.currentTimeMillis()));
         SimpleSync.LOGGER.debug("[SimpleSync] Status: {} - {}", status, detail);
     }
 
-    public void clearStatus() { this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L)); }
+    public void clearStatus() {
+        this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
+    }
 
     // ─── Path Helpers ────────────────────────────────────────────────────────
 
-    private Path getSavesDirectory() { return savesDirectory == null ? (savesDirectory = Path.of("saves")) : savesDirectory; }
+    private Path getSavesDirectory() {
+        if (savesDirectory == null) {
+            savesDirectory = Path.of("saves");
+        }
+        return savesDirectory;
+    }
 
     private Path getTempDir() throws IOException {
         Path tempDir = SyncConfig.getConfigDir().resolve("temp");
