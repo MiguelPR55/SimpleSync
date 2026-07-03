@@ -202,6 +202,7 @@ public class GoogleDriveProvider implements CloudProvider {
                             CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (" + percent + "%)");
                         }
                         case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (100%)");
+                        case NOT_STARTED -> {}
                     }
                 });
                 getRequest.executeMediaAndDownloadTo(outputStream);
