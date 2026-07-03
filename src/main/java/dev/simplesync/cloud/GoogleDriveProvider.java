@@ -138,6 +138,7 @@ public class GoogleDriveProvider implements CloudProvider {
                             CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
                         }
                         case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
+                        default -> {}
                     }
                 });
                 return request.execute();
@@ -155,6 +156,7 @@ public class GoogleDriveProvider implements CloudProvider {
                             CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
                         }
                         case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
+                        default -> {}
                     }
                 });
                 return request.execute();

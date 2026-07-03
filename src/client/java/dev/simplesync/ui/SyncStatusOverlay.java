@@ -3,18 +3,16 @@ package dev.simplesync.ui;
 import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.sync.StatusSnapshot;
 import dev.simplesync.sync.SyncStatus;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.text.Text;
 
 /**
  * HUD overlay that displays the current sync status.
  * Shows an animated icon and message in the top-right corner of the screen.
  */
-public class SyncStatusOverlay implements HudRenderCallback {
+public class SyncStatusOverlay {
 
     private static final SyncStatusOverlay INSTANCE = new SyncStatusOverlay();
     private static final int DISPLAY_DURATION_MS = 5000;
@@ -26,11 +24,6 @@ public class SyncStatusOverlay implements HudRenderCallback {
 
     public static SyncStatusOverlay getInstance() {
         return INSTANCE;
-    }
-
-    @Override
-    public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
-        renderOverlay(drawContext);
     }
 
     public void renderOverlay(DrawContext drawContext) {
