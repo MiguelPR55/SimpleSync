@@ -24,6 +24,7 @@ public class SyncConfigScreen extends Screen {
     
     private boolean showingTutorial = false;
     private boolean authenticating = false;
+    private boolean authenticated = false;
     private String authError = null;
 
     public SyncConfigScreen(Screen parent) {
@@ -97,7 +98,7 @@ public class SyncConfigScreen extends Screen {
                 .build());
 
         // Google Drive Account Sync/Authentication Button
-        boolean authenticated = CloudSyncManager.getInstance().getProvider().isAuthenticated();
+        authenticated = !authenticating && CloudSyncManager.getInstance().getProvider().isAuthenticated();
 
         Text authBtnText;
         if (authenticating) {
@@ -112,6 +113,7 @@ public class SyncConfigScreen extends Screen {
             if (authenticated) {
                 try {
                     CloudSyncManager.getInstance().getProvider().disconnect();
+                    authenticated = false;
                     authError = null;
                 } catch (IOException e) {
                     SimpleSync.LOGGER.error("[SimpleSync] Failed to disconnect provider", e);
@@ -157,6 +159,7 @@ public class SyncConfigScreen extends Screen {
                 if (this.client != null) {
                     this.client.execute(() -> {
                         authenticating = false;
+                        authenticated = true;
                         this.rebuildWidgets();
                     });
                 }
@@ -165,6 +168,7 @@ public class SyncConfigScreen extends Screen {
                 if (this.client != null) {
                     this.client.execute(() -> {
                         authenticating = false;
+                        authenticated = false;
                         authError = e.getMessage() != null ? e.getMessage() : "Unknown authentication error";
                         this.rebuildWidgets();
                     });
@@ -211,9 +215,6 @@ public class SyncConfigScreen extends Screen {
                 this.title, centerX, 25, 0xFFFFFF);
 
         int centerY = this.height / 2;
-
-        // Render connection status message
-        boolean authenticated = CloudSyncManager.getInstance().getProvider().isAuthenticated();
 
         Text statusTextVal;
         int statusColor;

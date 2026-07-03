@@ -52,18 +52,18 @@ public class SimpleSync implements ModInitializer {
         return lastWorldName;
     }
 
-    public static void openUrl(String url) {
+    public static boolean openUrl(String url) {
         URI uri;
         try {
             uri = URI.create(url);
         } catch (Exception e) {
             LOGGER.warn("[SimpleSync] Refused to open malformed URL: {}", url);
-            throw new IllegalArgumentException("Malformed OAuth URL", e);
+            return false;
         }
 
         if (!isAllowedGoogleUrl(uri)) {
             LOGGER.warn("[SimpleSync] Refused to open unexpected Google URL: {}", url);
-            throw new IllegalArgumentException("Unexpected Google URL host or scheme");
+            return false;
         }
 
         try {
@@ -74,12 +74,15 @@ public class SimpleSync implements ModInitializer {
                 net.minecraft.util.Util.getOperatingSystem().open(uri);
             }
             LOGGER.info("[SimpleSync] Opened URL in browser: {}", url);
+            return true;
         } catch (Exception e) {
             LOGGER.warn("[SimpleSync] Failed to open URL via Desktop API, falling back to Minecraft Util API: {}", e.getMessage());
             try {
                 net.minecraft.util.Util.getOperatingSystem().open(uri);
+                return true;
             } catch (Exception ex) {
                 LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);
+                return false;
             }
         }
     }

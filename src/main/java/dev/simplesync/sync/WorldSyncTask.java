@@ -50,7 +50,7 @@ public class WorldSyncTask {
             return false;
         }
         String normalized = entryName.replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.contains(":/") || normalized.contains(":\\")
+        if (normalized.startsWith("/") || normalized.indexOf(':') >= 0
                 || normalized.equals(".") || normalized.equals("..")
                 || normalized.startsWith("../") || normalized.contains("/../")
                 || normalized.endsWith("/..")) {
@@ -306,7 +306,7 @@ public class WorldSyncTask {
         }
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(savesDir)) {
             for (Path entry : stream) {
-                if (!Files.isDirectory(entry)) {
+                if (Files.isSymbolicLink(entry) || !Files.isDirectory(entry)) {
                     continue;
                 }
                 String name = entry.getFileName().toString();
@@ -355,6 +355,9 @@ public class WorldSyncTask {
 
             @Override
             public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                if (!dir.toAbsolutePath().normalize().startsWith(normalizedRoot)) {
+                    throw new IOException("Refusing to delete directory outside target directory: " + dir);
+                }
                 deleteWithRetry(dir);
                 return FileVisitResult.CONTINUE;
             }

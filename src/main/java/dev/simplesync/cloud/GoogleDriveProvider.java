@@ -19,6 +19,7 @@ import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
+import dev.simplesync.sync.WorldSyncTask;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * Google Drive implementation of CloudProvider.
@@ -43,6 +45,7 @@ public class GoogleDriveProvider implements CloudProvider {
     private static final List<String> SCOPES = Collections.singletonList(DriveScopes.DRIVE_FILE);
     private static final String SIMPLESYNC_FOLDER_NAME = "SimpleSync";
     private static final String ZIP_MIME_TYPE = "application/zip";
+    private static final Pattern DRIVE_FILE_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,256}$");
 
     private final Path credentialsDir;
     private final Map<String, String> fileIdCache = new ConcurrentHashMap<>();
@@ -111,6 +114,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public WorldMetadata upload(String worldName, Path zipFile) throws IOException {
+        validateWorldName(worldName);
         ensureAuthenticated();
         ensureSimpleSyncFolder();
 
@@ -170,6 +174,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public void download(String worldName, Path outputZip) throws IOException {
+        validateWorldName(worldName);
         ensureAuthenticated();
 
         String fileName = worldName + ".zip";
@@ -234,12 +239,18 @@ public class GoogleDriveProvider implements CloudProvider {
             }
 
             for (File file : result.getFiles()) {
-                if (file.getName() != null && file.getId() != null) {
-                    fileIdCache.put(file.getName(), file.getId());
+                String fileName = file.getName();
+                if (fileName == null || !fileName.endsWith(".zip")) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unexpected name: {}", fileName);
+                    continue;
                 }
-                String worldName = file.getName();
-                if (worldName.endsWith(".zip")) {
-                    worldName = worldName.substring(0, worldName.length() - 4);
+                String worldName = fileName.substring(0, fileName.length() - 4);
+                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unsafe world name: {}", fileName);
+                    continue;
+                }
+                if (file.getId() != null) {
+                    fileIdCache.put(fileName, file.getId());
                 }
 
                 long modifiedTime = (file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis();
@@ -260,6 +271,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public WorldMetadata getWorldMetadata(String worldName) throws IOException {
+        validateWorldName(worldName);
         ensureAuthenticated();
 
         String fileName = worldName + ".zip";
@@ -283,6 +295,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public void delete(String worldName) throws IOException {
+        validateWorldName(worldName);
         ensureAuthenticated();
 
         String fileName = worldName + ".zip";
@@ -362,11 +375,8 @@ public class GoogleDriveProvider implements CloudProvider {
 
         Credential credential = new com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp(
                 flow, receiver, url -> {
-                    try {
-                        SimpleSync.openUrl(url);
-                    } catch (Exception e) {
-                        SimpleSync.LOGGER.error("[SimpleSync] Failed to open browser", e);
-                        throw new IOException("Failed to open browser: " + e.getMessage(), e);
+                    if (!SimpleSync.openUrl(url)) {
+                        throw new IOException("Refused or failed to open OAuth URL");
                     }
                 }).authorize("user");
 
@@ -433,8 +443,13 @@ public class GoogleDriveProvider implements CloudProvider {
         SyncConfig config = SyncConfig.load();
         String savedFolderId = config.getSimpleSyncFolderId();
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
-            simpleSyncFolderId = savedFolderId;
-            return;
+            if (isSafeDriveFileId(savedFolderId)) {
+                simpleSyncFolderId = savedFolderId;
+                return;
+            }
+            SimpleSync.LOGGER.warn("[SimpleSync] Ignoring unsafe saved Google Drive folder id");
+            config.setSimpleSyncFolderId(null);
+            config.save();
         }
 
         FileList result = withRetry(() -> driveService.files().list()
@@ -445,6 +460,9 @@ public class GoogleDriveProvider implements CloudProvider {
 
         if (result != null && result.getFiles() != null && !result.getFiles().isEmpty()) {
             simpleSyncFolderId = result.getFiles().get(0).getId();
+            if (!isSafeDriveFileId(simpleSyncFolderId)) {
+                throw new IOException("Google Drive returned an invalid SimpleSync folder id");
+            }
             SimpleSync.LOGGER.info("[SimpleSync] Found SimpleSync folder: {}", simpleSyncFolderId);
         } else {
             File folderMetadata = new File();
@@ -456,6 +474,9 @@ public class GoogleDriveProvider implements CloudProvider {
                     .execute(), 3);
 
             simpleSyncFolderId = folder.getId();
+            if (!isSafeDriveFileId(simpleSyncFolderId)) {
+                throw new IOException("Google Drive returned an invalid SimpleSync folder id");
+            }
             SimpleSync.LOGGER.info("[SimpleSync] Created SimpleSync folder: {}", simpleSyncFolderId);
         }
 
@@ -485,6 +506,16 @@ public class GoogleDriveProvider implements CloudProvider {
             return id;
         }
         return null;
+    }
+
+    private void validateWorldName(String worldName) throws IOException {
+        if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+            throw new IOException("Invalid world name: " + worldName);
+        }
+    }
+
+    private boolean isSafeDriveFileId(String fileId) {
+        return fileId != null && DRIVE_FILE_ID_PATTERN.matcher(fileId).matches();
     }
 
     private String escapeQueryString(String str) {
