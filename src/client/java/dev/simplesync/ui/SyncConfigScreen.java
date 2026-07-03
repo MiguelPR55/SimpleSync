@@ -156,35 +156,33 @@ public class SyncConfigScreen extends Screen {
         CompletableFuture.runAsync(() -> {
             try {
                 CloudSyncManager.getInstance().getProvider().authenticate();
-                if (this.client != null) {
-                    this.client.execute(() -> {
-                        authenticating = false;
-                        authenticated = true;
-                        if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
-                            this.client.setScreen(this);
-                        }
-                        this.rebuildWidgets();
-                    });
-                }
+                onAuthenticationComplete(true, null);
             } catch (Exception e) {
                 SimpleSync.LOGGER.error("[SimpleSync] Google Drive authentication flow failed", e);
-                if (this.client != null) {
-                    this.client.execute(() -> {
-                        authenticating = false;
-                        authenticated = false;
-                        String msg = e.getMessage() != null ? e.getMessage() : "";
-                        if (msg.contains("cancelled by user") || msg.contains("interrupted")) {
-                            authError = null;
-                        } else {
-                            authError = msg.isEmpty() ? "Unknown authentication error" : msg;
-                        }
-                        if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
-                            this.client.setScreen(this);
-                        }
-                        this.rebuildWidgets();
-                    });
-                }
+                onAuthenticationComplete(false, e);
             }
+        });
+    }
+
+    private void onAuthenticationComplete(boolean success, Exception e) {
+        if (this.client == null) return;
+        this.client.execute(() -> {
+            authenticating = false;
+            authenticated = success;
+            if (!success && e != null) {
+                String msg = e.getMessage() != null ? e.getMessage() : "";
+                if (msg.contains("cancelled by user") || msg.contains("interrupted")) {
+                    authError = null;
+                } else {
+                    authError = msg.isEmpty() ? "Unknown authentication error" : msg;
+                }
+            } else {
+                authError = null;
+            }
+            if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
+                this.client.setScreen(this);
+            }
+            this.rebuildWidgets();
         });
     }
 

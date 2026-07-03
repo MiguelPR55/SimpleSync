@@ -331,21 +331,27 @@ public class GoogleDriveProvider implements CloudProvider {
 
     // ─── Private Helpers ────────────────────────────────────────────────────
 
-    private GoogleAuthorizationCodeFlow createFlow(NetHttpTransport transport) throws IOException, GeneralSecurityException {
+    private GoogleClientSecrets loadClientSecrets() throws IOException {
         Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
-        GoogleClientSecrets secrets;
-        if (Files.exists(clientSecretFile)) {
-            try (InputStream in = Files.newInputStream(clientSecretFile)) {
-                secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
-            }
-        } else {
+        if (!Files.exists(clientSecretFile)) {
+            SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
+            SimpleSync.LOGGER.warn("[SimpleSync] Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
+            SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
             return null;
         }
-
-        if (secrets.getInstalled() == null && secrets.getWeb() == null) {
-            throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
+        try (InputStream in = Files.newInputStream(clientSecretFile)) {
+            GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
+            if (secrets.getInstalled() == null && secrets.getWeb() == null) {
+                throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
+            }
+            return secrets;
         }
+    }
 
+    private GoogleAuthorizationCodeFlow createFlow(NetHttpTransport transport, GoogleClientSecrets secrets) throws IOException {
+        if (secrets == null) {
+            return null;
+        }
         if (Files.isSymbolicLink(credentialsDir)) {
             throw new IOException("Refusing to use symlinked credentials directory: " + credentialsDir);
         }
@@ -358,20 +364,12 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private void initializeDriveService() throws IOException, GeneralSecurityException {
         final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
-        Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
-        GoogleClientSecrets secrets;
-        if (Files.exists(clientSecretFile)) {
-            try (InputStream in = Files.newInputStream(clientSecretFile)) {
-                secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
-            }
-        } else {
-            SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
-            SimpleSync.LOGGER.warn("[SimpleSync] Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
-            SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
+        GoogleClientSecrets secrets = loadClientSecrets();
+        if (secrets == null) {
             return;
         }
 
-        GoogleAuthorizationCodeFlow flow = createFlow(transport);
+        GoogleAuthorizationCodeFlow flow = createFlow(transport, secrets);
         if (flow == null) {
             return;
         }
@@ -403,7 +401,7 @@ public class GoogleDriveProvider implements CloudProvider {
     private boolean initializeDriveServiceOffline() {
         try {
             final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
-            GoogleAuthorizationCodeFlow flow = createFlow(transport);
+            GoogleAuthorizationCodeFlow flow = createFlow(transport, loadClientSecrets());
             if (flow == null) {
                 return false;
             }
