@@ -19,6 +19,9 @@
     ],
     "client": [
       "dev.simplesync.SimpleSyncClient"
+    ],
+    "modmenu": [
+      "dev.simplesync.compat.ModMenuIntegration"
     ]
   },
   "mixins": [

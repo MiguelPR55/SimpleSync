@@ -34,9 +34,9 @@ public class WorldSyncTaskTest {
     }
 
     @Test
-    void testIsLocalWorldModified_FirstSyncReturnsFalse() throws IOException {
-        // When lastSize == 0 && lastMtime == 0 (no tracking or first sync), should return false to avoid spurious conflicts
-        assertFalse(WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName));
+    void testIsLocalWorldModified_FirstSyncReturnsTrue() throws IOException {
+        // When lastSize == 0 && lastMtime == 0 (no tracking or first sync), should return true to trigger initial upload
+        assertTrue(WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName));
     }
 
     @Test

@@ -66,4 +66,10 @@ public interface CloudProvider {
      * @throws IOException if deletion fails
      */
     void delete(String worldName) throws IOException;
+
+    /**
+     * Disconnects the provider, clearing cache and deleting stored OAuth credentials.
+     * @throws IOException if clearing credentials fails
+     */
+    void disconnect() throws IOException;
 }

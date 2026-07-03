@@ -30,7 +30,6 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             if (isIntegratedServer(server) && lastWorldName != null) {
-                needsTitleScreenSync = true;
                 if (SyncConfig.load().autoSyncOnExit) {
                     LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
                     CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
@@ -47,5 +46,27 @@ public class SimpleSync implements ModInitializer {
 
     public static String getLastWorldName() {
         return lastWorldName;
+    }
+
+    public static void openUrl(String url) {
+        try {
+            String os = System.getProperty("os.name").toLowerCase();
+            if (os.contains("win")) {
+                Runtime.getRuntime().exec(new String[]{"cmd", "/c", "start", url});
+            } else if (os.contains("mac")) {
+                Runtime.getRuntime().exec(new String[]{"open", url});
+            } else {
+                // Linux / Unix - spawn process directly which works reliably inside Flatpak sandbox
+                Runtime.getRuntime().exec(new String[]{"xdg-open", url});
+            }
+            LOGGER.info("[SimpleSync] Successfully opened URL in browser using OS command: {}", url);
+        } catch (Exception e) {
+            LOGGER.warn("[SimpleSync] Failed to open URL via OS command, falling back to Minecraft Util API: {}", e.getMessage());
+            try {
+                net.minecraft.util.Util.getOperatingSystem().open(java.net.URI.create(url));
+            } catch (Exception ex) {
+                LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);
+            }
+        }
     }
 }

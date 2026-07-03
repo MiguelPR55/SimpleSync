@@ -92,7 +92,7 @@ public class CloudSyncManager {
                 List<WorldMetadata> cloudWorlds = cloud.listWorlds();
                 if (cloudWorlds.isEmpty()) {
                     SimpleSync.LOGGER.info("[SimpleSync] No worlds found in cloud");
-                    setStatus(SyncStatus.DONE, "");
+                    clearStatus();
                     return;
                 }
 
@@ -116,7 +116,7 @@ public class CloudSyncManager {
 
                         long localTimestamp = config.getLastSyncTimestamp(worldName);
 
-                        if (cloudWorld.lastModified() > localTimestamp) {
+                        if (cloudWorld.lastModified() > localTimestamp || !java.nio.file.Files.isDirectory(worldFolder)) {
                             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
                             boolean localModified = WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats);
                             if (localModified && conflictCallback != null) {
@@ -181,7 +181,11 @@ public class CloudSyncManager {
 
                 config.save();
 
-                setStatus(SyncStatus.DONE, "");
+                if (downloadCount > 0) {
+                    setStatus(SyncStatus.DONE, "");
+                } else {
+                    clearStatus();
+                }
 
             } catch (Exception e) {
                 SimpleSync.LOGGER.error("[SimpleSync] Sync from cloud failed", e);

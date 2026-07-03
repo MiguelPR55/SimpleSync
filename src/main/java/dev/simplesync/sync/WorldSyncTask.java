@@ -149,6 +149,7 @@ public class WorldSyncTask {
         }
         Files.createDirectories(stagingDir);
 
+        boolean rollbackFailed = false;
         try {
             try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
                  ZipInputStream zis = new ZipInputStream(fis)) {
@@ -199,7 +200,8 @@ public class WorldSyncTask {
                     try {
                         Files.move(backupDir, normalizedTarget, StandardCopyOption.REPLACE_EXISTING);
                     } catch (IOException rollbackEx) {
-                        SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup!", rollbackEx);
+                        rollbackFailed = true;
+                        SimpleSync.LOGGER.error("[SimpleSync] CRITICAL: Failed to rollback backup! Backup preserved at: {}", backupDir, rollbackEx);
                         e.addSuppressed(rollbackEx);
                         throw new IOException("Extraction failed and CRITICAL rollback failure occurred: " + rollbackEx.getMessage(), e);
                     }
@@ -210,7 +212,7 @@ public class WorldSyncTask {
             if (Files.isDirectory(stagingDir)) {
                 deleteDirectoryRecursively(stagingDir);
             }
-            if (Files.isDirectory(backupDir)) {
+            if (!rollbackFailed && Files.isDirectory(backupDir)) {
                 deleteDirectoryRecursively(backupDir);
             }
         }
@@ -351,7 +353,8 @@ public class WorldSyncTask {
         long lastMtime = config.getLastLocalMtime(worldName);
 
         if (lastSize == 0 && lastMtime == 0) {
-            return false;
+            // Untracked world, needs initial sync/upload
+            return true;
         }
 
         return stats.size() != lastSize || stats.latestModifiedTime() != lastMtime;

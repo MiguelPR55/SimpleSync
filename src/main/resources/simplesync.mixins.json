@@ -2,8 +2,10 @@
   "required": true,
   "package": "dev.simplesync.mixin",
   "compatibilityLevel": "JAVA_21",
+  "refmap": "client-simplesync-refmap.json",
   "client": [
-    "TitleScreenMixin"
+    "TitleScreenMixin",
+    "ScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -22,7 +22,7 @@ public class SyncStatusOverlay implements HudRenderCallback {
     private static final int PADDING = 6;
     private static final int MARGIN = 10;
     private static final String[] SPINNER_FRAMES = {"|", "/", "-", "\\"};
-    private float animationTicks = 0.0f;
+
 
     public static SyncStatusOverlay getInstance() {
         return INSTANCE;
@@ -30,7 +30,10 @@ public class SyncStatusOverlay implements HudRenderCallback {
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
-        animationTicks += tickCounter.getDynamicDeltaTicks();
+        renderOverlay(drawContext);
+    }
+
+    public void renderOverlay(DrawContext drawContext) {
         CloudSyncManager manager = CloudSyncManager.getInstance();
         StatusSnapshot snapshot = manager.getStatusSnapshot();
         SyncStatus status = snapshot.status();
@@ -72,7 +75,7 @@ public class SyncStatusOverlay implements HudRenderCallback {
             }
         }
 
-        if (alpha <= 0) {
+        if (alpha < 10) {
             return;
         }
 
@@ -120,11 +123,8 @@ public class SyncStatusOverlay implements HudRenderCallback {
     }
 
     private String getSpinner() {
-        int frame = (int) ((animationTicks / 2.4f) % SPINNER_FRAMES.length);
-        if (frame < 0) {
-            frame += SPINNER_FRAMES.length;
-        }
-        return SPINNER_FRAMES[frame];
+        long frame = (System.currentTimeMillis() / 150) % SPINNER_FRAMES.length;
+        return SPINNER_FRAMES[(int) frame];
     }
 
     private int getStatusColor(SyncStatus status) {
