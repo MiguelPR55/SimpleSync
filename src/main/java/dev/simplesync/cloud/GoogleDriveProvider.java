@@ -1,7 +1,6 @@
 package dev.simplesync.cloud;
 
 import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
@@ -20,7 +19,6 @@ import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
-
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -360,25 +358,42 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private void initializeDriveService() throws IOException, GeneralSecurityException {
         final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
-        GoogleAuthorizationCodeFlow flow = createFlow(transport);
-
-        if (flow == null) {
-            Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
+        Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
+        GoogleClientSecrets secrets;
+        if (Files.exists(clientSecretFile)) {
+            try (InputStream in = Files.newInputStream(clientSecretFile)) {
+                secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
+            }
+        } else {
             SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
             SimpleSync.LOGGER.warn("[SimpleSync] Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
             SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
             return;
         }
 
-        LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .build();
+        GoogleAuthorizationCodeFlow flow = createFlow(transport);
+        if (flow == null) {
+            return;
+        }
 
-        Credential credential = new com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp(
-                flow, receiver, url -> {
-                    if (!SimpleSync.openUrl(url)) {
-                        throw new IOException("Refused or failed to open OAuth URL");
-                    }
-                }).authorize("user");
+        GoogleClientSecrets.Details details = secrets.getInstalled() != null ? secrets.getInstalled() : secrets.getWeb();
+        if (details == null) {
+            throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
+        }
+
+        Credential credential;
+        try {
+            credential = new DeviceCodeAuthenticator().authenticate(
+                    flow,
+                    details.getClientId(),
+                    details.getClientSecret(),
+                    SCOPES.get(0),
+                    CloudSyncManager.getInstance().getAuthPromptCallback()
+            );
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Authentication flow was interrupted", e);
+        }
 
         driveService = new Drive.Builder(transport, JSON_FACTORY, credential)
                 .setApplicationName(APPLICATION_NAME)

@@ -50,14 +50,14 @@ public class SyncConfigScreen extends Screen {
             // Add Open Console button
             this.addDrawableChild(ButtonWidget.builder(
                     Text.literal("Google Cloud Console"),
-                    button -> dev.simplesync.SimpleSync.openUrl("https://console.cloud.google.com/"))
+                    button -> SimpleSync.openUrl("https://console.cloud.google.com/"))
                     .dimensions(centerX - buttonWidth - 5, this.height - 65, buttonWidth, 20)
                     .build());
 
             // Add Open Drive API library button
             this.addDrawableChild(ButtonWidget.builder(
                     Text.literal("Google Drive API Library"),
-                    button -> dev.simplesync.SimpleSync.openUrl("https://console.cloud.google.com/apis/library/drive.googleapis.com"))
+                    button -> SimpleSync.openUrl("https://console.cloud.google.com/apis/library/drive.googleapis.com"))
                     .dimensions(centerX + 5, this.height - 65, buttonWidth, 20)
                     .build());
 
@@ -160,6 +160,9 @@ public class SyncConfigScreen extends Screen {
                     this.client.execute(() -> {
                         authenticating = false;
                         authenticated = true;
+                        if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
+                            this.client.setScreen(this);
+                        }
                         this.rebuildWidgets();
                     });
                 }
@@ -169,7 +172,15 @@ public class SyncConfigScreen extends Screen {
                     this.client.execute(() -> {
                         authenticating = false;
                         authenticated = false;
-                        authError = e.getMessage() != null ? e.getMessage() : "Unknown authentication error";
+                        String msg = e.getMessage() != null ? e.getMessage() : "";
+                        if (msg.contains("cancelled by user") || msg.contains("interrupted")) {
+                            authError = null;
+                        } else {
+                            authError = msg.isEmpty() ? "Unknown authentication error" : msg;
+                        }
+                        if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
+                            this.client.setScreen(this);
+                        }
                         this.rebuildWidgets();
                     });
                 }
@@ -247,7 +258,7 @@ public class SyncConfigScreen extends Screen {
             int startY = 45;
             // Use a generous and robust click box around the center of the first step
             if (mouseY >= startY - 4 && mouseY <= startY + 14 && mouseX >= centerX - 150 && mouseX <= centerX + 150) {
-                dev.simplesync.SimpleSync.openUrl("https://console.cloud.google.com/");
+                SimpleSync.openUrl("https://console.cloud.google.com/");
                 return true;
             }
         }

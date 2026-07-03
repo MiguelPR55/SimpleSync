@@ -1,0 +1,153 @@
+package dev.simplesync.cloud;
+
+import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.auth.oauth2.TokenResponse;
+import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import dev.simplesync.SimpleSync;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Implements the Google OAuth 2.0 Device Authorization Grant (RFC 8628).
+ * Feeds a TokenResponse into GoogleAuthorizationCodeFlow to reuse existing token persistence and refresh logic.
+ */
+public class DeviceCodeAuthenticator {
+
+    private static final String DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code";
+    private static final String TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
+
+    /**
+     * Executes the device authorization grant flow.
+     * Must be called from a background worker thread (never on the render thread).
+     *
+     * @param flow         The GoogleAuthorizationCodeFlow to store the credential in
+     * @param clientId     The OAuth Client ID
+     * @param clientSecret The OAuth Client Secret
+     * @param scope        The requested scope (e.g., DriveScopes.DRIVE_FILE)
+     * @param callback     Optional callback to display the user code and verification URL in the UI
+     * @throws IOException          if authentication fails or is cancelled
+     * @throws InterruptedException if the thread is interrupted while waiting
+     */
+    public Credential authenticate(
+            GoogleAuthorizationCodeFlow flow,
+            String clientId,
+            String clientSecret,
+            String scope,
+            AuthPromptCallback callback
+    ) throws IOException, InterruptedException {
+        SimpleSync.LOGGER.info("[SimpleSync] Initiating Google Device Authorization Grant...");
+
+        String deviceCodeBody = "client_id=" + enc(clientId) + "&scope=" + enc(scope);
+        JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
+
+        String deviceCode = deviceResp.get("device_code").getAsString();
+        String userCode = deviceResp.get("user_code").getAsString();
+        String verificationUrl = deviceResp.has("verification_url")
+                ? deviceResp.get("verification_url").getAsString()
+                : (deviceResp.has("verification_uri") ? deviceResp.get("verification_uri").getAsString() : "https://www.google.com/device");
+        long expiresIn = deviceResp.get("expires_in").getAsLong();
+        long intervalSeconds = deviceResp.has("interval") ? deviceResp.get("interval").getAsLong() : 5;
+
+        SimpleSync.LOGGER.info("[SimpleSync] Device Auth prompt -> URL: {}, Code: {} (Expires in {}s)", verificationUrl, userCode, expiresIn);
+
+        final AtomicBoolean cancelled = new AtomicBoolean(false);
+        final Thread workerThread = Thread.currentThread();
+
+        if (callback != null) {
+            callback.onAuthPrompt(userCode, verificationUrl, expiresIn, () -> {
+                SimpleSync.LOGGER.info("[SimpleSync] User requested cancellation of Device Auth prompt");
+                cancelled.set(true);
+                workerThread.interrupt();
+            });
+        }
+
+        long deadline = System.currentTimeMillis() + expiresIn * 1000L;
+
+        while (System.currentTimeMillis() < deadline) {
+            if (cancelled.get() || Thread.currentThread().isInterrupted()) {
+                throw new IOException("Authentication cancelled by user");
+            }
+
+            try {
+                Thread.sleep(intervalSeconds * 1000L);
+            } catch (InterruptedException e) {
+                if (cancelled.get()) {
+                    throw new IOException("Authentication cancelled by user");
+                }
+                throw e;
+            }
+
+            if (cancelled.get()) {
+                throw new IOException("Authentication cancelled by user");
+            }
+
+            String tokenBody = "client_id=" + enc(clientId)
+                    + (clientSecret != null && !clientSecret.isEmpty() ? "&client_secret=" + enc(clientSecret) : "")
+                    + "&device_code=" + enc(deviceCode)
+                    + "&grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code");
+
+            HttpResponse<String> raw = rawPost(TOKEN_URL, tokenBody);
+            JsonObject body = JsonParser.parseString(raw.body()).getAsJsonObject();
+
+            if (raw.statusCode() == 200 && body.has("access_token")) {
+                SimpleSync.LOGGER.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
+                TokenResponse tokenResponse = new TokenResponse();
+                tokenResponse.setAccessToken(body.get("access_token").getAsString());
+                tokenResponse.setRefreshToken(body.has("refresh_token") ? body.get("refresh_token").getAsString() : null);
+                tokenResponse.setExpiresInSeconds(body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L);
+                tokenResponse.setTokenType("Bearer");
+                tokenResponse.setScope(scope);
+                return flow.createAndStoreCredential(tokenResponse, "user");
+            }
+
+            String error = body.has("error") ? body.get("error").getAsString() : "unknown_error";
+            switch (error) {
+                case "authorization_pending" -> {
+                    // Waiting for user to complete authorization in browser
+                }
+                case "slow_down" -> {
+                    intervalSeconds += 5; // RFC 8628 requirement
+                }
+                case "expired_token" -> throw new IOException("Authorization code has expired. Please try again.");
+                case "access_denied" -> throw new IOException("Authentication denied by user.");
+                default -> throw new IOException("Authentication failed: " + error + (body.has("error_description") ? " - " + body.get("error_description").getAsString() : ""));
+            }
+        }
+
+        throw new IOException("Authentication timed out before completion.");
+    }
+
+    private JsonObject post(String url, String body) throws IOException, InterruptedException {
+        HttpResponse<String> resp = rawPost(url, body);
+        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+            throw new IOException("HTTP error from Google API (" + resp.statusCode() + "): " + resp.body());
+        }
+        return JsonParser.parseString(resp.body()).getAsJsonObject();
+    }
+
+    private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String enc(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8);
+    }
+}

@@ -33,5 +33,14 @@ public class SimpleSyncClient implements ClientModInitializer {
                 }
             });
         });
+
+        CloudSyncManager.getInstance().setAuthPromptCallback((userCode, verificationUrl, expiresInSeconds, onCancel) -> {
+            MinecraftClient.getInstance().execute(() -> {
+                net.minecraft.client.gui.screen.Screen current = MinecraftClient.getInstance().currentScreen;
+                MinecraftClient.getInstance().setScreen(new dev.simplesync.ui.DeviceAuthScreen(
+                        current, userCode, verificationUrl, expiresInSeconds, onCancel
+                ));
+            });
+        });
     }
 }

@@ -34,6 +34,7 @@ public class CloudSyncManager {
     private Path savesDirectory;
     private ConflictCallback conflictCallback;
     private Runnable conflictCancelCallback;
+    private AuthPromptCallback authPromptCallback;
 
     public void setConflictCallback(ConflictCallback callback) {
         this.conflictCallback = callback;
@@ -41,6 +42,14 @@ public class CloudSyncManager {
 
     public void setConflictCancelCallback(Runnable callback) {
         this.conflictCancelCallback = callback;
+    }
+
+    public void setAuthPromptCallback(AuthPromptCallback callback) {
+        this.authPromptCallback = callback;
+    }
+
+    public AuthPromptCallback getAuthPromptCallback() {
+        return authPromptCallback;
     }
 
     public void setSavesDirectory(Path savesDirectory) {

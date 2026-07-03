@@ -48,9 +48,6 @@ dependencies {
     implementation 'com.google.api-client:google-api-client:2.7.2'
     shadowBundle 'com.google.api-client:google-api-client:2.7.2'
 
-    implementation 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
-    shadowBundle 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
-
     implementation 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
     shadowBundle 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
 
@@ -75,10 +72,6 @@ shadowJar {
     relocate 'com.google', 'dev.simplesync.shadow.com.google'
     relocate 'io.grpc', 'dev.simplesync.shadow.io.grpc'
     relocate 'org.apache.http', 'dev.simplesync.shadow.org.apache.http'
-    relocate 'org.mortbay', 'dev.simplesync.shadow.org.mortbay'
-    relocate 'org.eclipse.jetty', 'dev.simplesync.shadow.org.eclipse.jetty'
-    relocate 'javax.servlet', 'dev.simplesync.shadow.javax.servlet'
-    relocate 'jakarta.servlet', 'dev.simplesync.shadow.jakarta.servlet'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'
