@@ -12,6 +12,7 @@ SimpleSync is a Minecraft mod that automatically saves and synchronizes your sin
 
 ## Requirements and basic usage
 
-1. Place the mod file in your mods folder.
-2. Start the game and follow the on-screen steps to securely connect your Google Drive account.
-3. The mod will automatically handle the rest in the background.
+1. Ensure you have Minecraft 26.2 and the Fabric Loader installed.
+2. Place the mod file in your mods folder.
+3. Start the game and follow the on-screen steps to securely connect your Google Drive account.
+4. The mod will automatically handle the rest in the background.
