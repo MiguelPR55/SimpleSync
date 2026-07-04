@@ -160,7 +160,7 @@ public class SyncConfigScreen extends Screen {
                 SimpleSync.LOGGER.error("[SimpleSync] Google Drive authentication flow failed", e);
                 onAuthenticationComplete(false, e);
             }
-        });
+        }, CloudSyncManager.getInstance().getExecutor());
     }
 
     private void onAuthenticationComplete(boolean success, Exception e) {

@@ -92,6 +92,30 @@ public class CloudSyncManager {
         return provider;
     }
 
+    public ExecutorService getExecutor() {
+        return executor;
+    }
+
+    private void ensureAuthenticatedOrThrow(CloudProvider cloud, Runnable onAuthenticated) throws IOException {
+        if (!cloud.isAuthenticated()) {
+            setStatus(SyncStatus.AUTHENTICATING, "");
+            if (cloud.isAuthenticating()) {
+                throw new IOException("Authentication pending: please complete device authorization in browser.");
+            }
+            CompletableFuture.runAsync(() -> {
+                try {
+                    cloud.authenticate();
+                    if (onAuthenticated != null) {
+                        onAuthenticated.run();
+                    }
+                } catch (Exception e) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
+                }
+            }, executor);
+            throw new IOException("Authentication required: please complete device authorization in browser.");
+        }
+    }
+
     /**
      * Downloads all worlds from the cloud that are newer than local copies.
      * Called when the game starts (from TitleScreen).
@@ -100,20 +124,7 @@ public class CloudSyncManager {
         return CompletableFuture.runAsync(() -> {
             try {
                 CloudProvider cloud = getProvider();
-                if (!cloud.isAuthenticated()) {
-                    setStatus(SyncStatus.AUTHENTICATING, "");
-                    if (cloud.isAuthenticating()) {
-                        throw new IOException("Authentication pending: please complete device authorization in browser.");
-                    }
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            cloud.authenticate();
-                        } catch (Exception e) {
-                            SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
-                        }
-                    });
-                    throw new IOException("Authentication required: please complete device authorization in browser.");
-                }
+                ensureAuthenticatedOrThrow(cloud, this::syncAllWorldsFromCloud);
 
                 setStatus(SyncStatus.CHECKING, "");
 
@@ -261,20 +272,7 @@ public class CloudSyncManager {
         }
 
         CloudProvider cloud = getProvider();
-        if (!cloud.isAuthenticated()) {
-            setStatus(SyncStatus.AUTHENTICATING, "");
-            if (cloud.isAuthenticating()) {
-                throw new IOException("Authentication pending: please complete device authorization in browser.");
-            }
-            CompletableFuture.runAsync(() -> {
-                try {
-                    cloud.authenticate();
-                } catch (Exception e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
-                }
-            });
-            throw new IOException("Authentication required: please complete device authorization in browser.");
-        }
+        ensureAuthenticatedOrThrow(cloud, () -> uploadWorldAsync(worldName));
 
         Path savesDir = getSavesDirectory();
         Path worldFolder = savesDir.resolve(worldName).normalize();

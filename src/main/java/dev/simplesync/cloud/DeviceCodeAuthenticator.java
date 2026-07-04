@@ -144,29 +144,14 @@ public class DeviceCodeAuthenticator {
         return JsonParser.parseString(resp.body()).getAsJsonObject();
     }
 
-    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException, InterruptedException {
-        int attempt = 0;
-        int maxAttempts = 3;
-        IOException lastEx = null;
-        while (attempt < maxAttempts) {
-            attempt++;
-            try {
-                HttpResponse<String> resp = rawPost(url, body);
-                if (resp.statusCode() >= 500) {
-                    lastEx = new IOException("Google server returned HTTP " + resp.statusCode());
-                } else {
-                    return resp;
-                }
-            } catch (IOException e) {
-                lastEx = e;
+    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException {
+        return dev.simplesync.util.RetryUtil.retry(3, "OAuth POST", () -> {
+            HttpResponse<String> resp = rawPost(url, body);
+            if (resp.statusCode() >= 500) {
+                throw new IOException("Google server returned HTTP " + resp.statusCode());
             }
-            if (attempt < maxAttempts) {
-                long delay = 1000L * (1L << (attempt - 1));
-                SimpleSync.LOGGER.warn("[SimpleSync] Transient post error (attempt {}/{}), retrying in {}ms...", attempt, maxAttempts, delay);
-                Thread.sleep(delay);
-            }
-        }
-        throw lastEx;
+            return resp;
+        });
     }
 
     private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {

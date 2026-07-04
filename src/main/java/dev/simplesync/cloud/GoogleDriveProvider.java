@@ -9,6 +9,7 @@ import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
+import dev.simplesync.util.RetryUtil;
 
 import java.io.*;
 import java.net.URI;
@@ -45,6 +46,8 @@ public class GoogleDriveProvider implements CloudProvider {
     private volatile String simpleSyncFolderId;
     private final AtomicBoolean isAuthenticating = new AtomicBoolean(false);
 
+    private record ArchiveFileIds(String tarZstId, String zipId) {}
+
     public GoogleDriveProvider() {
         this.credentialsDir = SyncConfig.getConfigDir().resolve("credentials");
         this.httpClient = HttpClient.newBuilder()
@@ -65,7 +68,6 @@ public class GoogleDriveProvider implements CloudProvider {
                 return false;
             }
             if (System.currentTimeMillis() >= tokens.expiresAtMs - 300000) {
-                // Try to refresh token
                 try {
                     ensureValidAccessToken();
                     return true;
@@ -119,27 +121,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public WorldMetadata upload(String worldName, Path zipFile) throws IOException {
-        int maxAttempts = 3;
-        IOException lastError = null;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                return uploadOnce(worldName, zipFile);
-            } catch (IOException e) {
-                lastError = e;
-                SimpleSync.LOGGER.warn("[SimpleSync] Upload attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                if (attempt < maxAttempts) {
-                    try {
-                        long baseDelay = 1000L * (1L << (attempt - 1));
-                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                        Thread.sleep(Math.max(100L, baseDelay + jitter));
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Upload interrupted during retry delay", ie);
-                    }
-                }
-            }
-        }
-        throw lastError != null ? lastError : new IOException("Upload failed after retries");
+        return RetryUtil.retry(3, "Upload", () -> uploadOnce(worldName, zipFile));
     }
 
     private WorldMetadata uploadOnce(String worldName, Path zipFile) throws IOException {
@@ -260,28 +242,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public void download(String worldName, Path outputArchive) throws IOException {
-        int maxAttempts = 3;
-        IOException lastError = null;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                downloadOnce(worldName, outputArchive);
-                return;
-            } catch (IOException e) {
-                lastError = e;
-                SimpleSync.LOGGER.warn("[SimpleSync] Download attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                if (attempt < maxAttempts) {
-                    try {
-                        long baseDelay = 1000L * (1L << (attempt - 1));
-                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                        Thread.sleep(Math.max(100L, baseDelay + jitter));
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Download interrupted during retry delay", ie);
-                    }
-                }
-            }
-        }
-        throw lastError != null ? lastError : new IOException("Download failed after retries");
+        RetryUtil.retryVoid(3, "Download", () -> downloadOnce(worldName, outputArchive));
     }
 
     private void downloadOnce(String worldName, Path outputArchive) throws IOException {
@@ -342,7 +303,7 @@ public class GoogleDriveProvider implements CloudProvider {
         List<WorldMetadata> worlds = new ArrayList<>();
         fileIdCache.clear();
 
-        String query = String.format("'%s' in parents and trashed=false", simpleSyncFolderId);
+        String query = buildQuery("'%s' in parents and trashed=false", simpleSyncFolderId);
         java.util.Set<String> seenWorldNames = new java.util.HashSet<>();
         String pageToken = null;
         String accessToken = ensureValidAccessToken();
@@ -390,7 +351,7 @@ public class GoogleDriveProvider implements CloudProvider {
                     fileIdCache.put(fileName, fileId);
                 }
                 if (seenWorldNames.contains(worldName)) {
-                    continue; // Skip older duplicates or alternate formats of the same world
+                    continue; 
                 }
                 seenWorldNames.add(worldName);
 
@@ -417,24 +378,23 @@ public class GoogleDriveProvider implements CloudProvider {
     public WorldMetadata getWorldMetadata(String worldName) throws IOException {
         validateWorldName(worldName);
 
-        String fileIdTarZst = findFileId(worldName + ".tar.zst");
-        String fileIdZip = findFileId(worldName + ".zip");
+        ArchiveFileIds ids = findBothFileIds(worldName);
 
-        if (fileIdTarZst == null && fileIdZip == null) {
+        if (ids.tarZstId() == null && ids.zipId() == null) {
             return null;
         }
 
-        if (fileIdTarZst != null && fileIdZip != null) {
-            WorldMetadata metaTarZst = getFileMetadataById(fileIdTarZst, worldName);
-            WorldMetadata metaZip = getFileMetadataById(fileIdZip, worldName);
+        if (ids.tarZstId() != null && ids.zipId() != null) {
+            WorldMetadata metaTarZst = getFileMetadataById(ids.tarZstId(), worldName);
+            WorldMetadata metaZip = getFileMetadataById(ids.zipId(), worldName);
             
             if (metaZip != null && metaTarZst != null) {
                 if (metaZip.lastModified() > metaTarZst.lastModified()) {
-                    fileIdCache.put(worldName + ".zip", fileIdZip);
+                    fileIdCache.put(worldName + ".zip", ids.zipId());
                     fileIdCache.remove(worldName + ".tar.zst");
                     return metaZip;
                 } else {
-                    fileIdCache.put(worldName + ".tar.zst", fileIdTarZst);
+                    fileIdCache.put(worldName + ".tar.zst", ids.tarZstId());
                     fileIdCache.remove(worldName + ".zip");
                     return metaTarZst;
                 }
@@ -444,7 +404,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 return metaTarZst;
             }
         } else {
-            String targetFileId = (fileIdTarZst != null) ? fileIdTarZst : fileIdZip;
+            String targetFileId = (ids.tarZstId() != null) ? ids.tarZstId() : ids.zipId();
             return getFileMetadataById(targetFileId, worldName);
         }
     }
@@ -476,21 +436,18 @@ public class GoogleDriveProvider implements CloudProvider {
         validateWorldName(worldName);
         
         String accessToken = ensureValidAccessToken();
-        
-        String fileNameTarZst = worldName + ".tar.zst";
-        String fileIdTarZst = findFileId(fileNameTarZst);
-        if (fileIdTarZst != null) {
-            deleteFileById(accessToken, fileIdTarZst);
-            fileIdCache.remove(fileNameTarZst);
-            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameTarZst);
+        ArchiveFileIds ids = findBothFileIds(worldName);
+
+        if (ids.tarZstId() != null) {
+            deleteFileById(accessToken, ids.tarZstId());
+            fileIdCache.remove(worldName + ".tar.zst");
+            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", worldName + ".tar.zst");
         }
 
-        String fileNameZip = worldName + ".zip";
-        String fileIdZip = findFileId(fileNameZip);
-        if (fileIdZip != null) {
-            deleteFileById(accessToken, fileIdZip);
-            fileIdCache.remove(fileNameZip);
-            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameZip);
+        if (ids.zipId() != null) {
+            deleteFileById(accessToken, ids.zipId());
+            fileIdCache.remove(worldName + ".zip");
+            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", worldName + ".zip");
         }
     }
 
@@ -517,6 +474,20 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     // ─── Private Helpers ────────────────────────────────────────────────────
+
+    private ArchiveFileIds findBothFileIds(String worldName) throws IOException {
+        String fileIdTarZst = findFileId(worldName + ".tar.zst");
+        String fileIdZip = findFileId(worldName + ".zip");
+        return new ArchiveFileIds(fileIdTarZst, fileIdZip);
+    }
+
+    private String buildQuery(String format, String... args) {
+        Object[] escapedArgs = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            escapedArgs[i] = escapeQueryString(args[i]);
+        }
+        return String.format(format, escapedArgs);
+    }
 
     public static class ClientSecrets {
         public Details installed;
@@ -558,7 +529,6 @@ public class GoogleDriveProvider implements CloudProvider {
             throw new IOException("Google Drive is not authenticated. Please authenticate.");
         }
         
-        // Refresh token if expired or expiring within 5 minutes (300 seconds)
         if (System.currentTimeMillis() >= tokenData.expiresAtMs - 300000) {
             if (tokenData.refreshToken == null || tokenData.refreshToken.isEmpty()) {
                 throw new IOException("Access token expired and no refresh token is available. Please re-authenticate.");
@@ -624,8 +594,9 @@ public class GoogleDriveProvider implements CloudProvider {
                             simpleSyncFolderId = savedFolderId;
                             return;
                         }
+                    } else if (checkResp.statusCode() == 404) {
+                        SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was not found (404).", savedFolderId);
                     }
-                    SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was trashed or not found.", savedFolderId);
                 } catch (Exception e) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Failed to verify saved SimpleSync folder ID {} ({}). Will search or recreate...", savedFolderId, e.getMessage());
                 }
@@ -636,8 +607,7 @@ public class GoogleDriveProvider implements CloudProvider {
             config.save();
         }
 
-        // Search for existing folder
-        String query = "name='" + escapeQueryString(SIMPLESYNC_FOLDER_NAME) + "' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+        String query = buildQuery("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", SIMPLESYNC_FOLDER_NAME);
         String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=createdTime";
         
         HttpRequest searchRequest = HttpRequest.newBuilder(URI.create(searchUrl))
@@ -663,7 +633,6 @@ public class GoogleDriveProvider implements CloudProvider {
             SimpleSync.LOGGER.warn("[SimpleSync] Failed to search for SimpleSync folder: {}", e.getMessage());
         }
 
-        // Create folder
         JsonObject folderMeta = new JsonObject();
         folderMeta.addProperty("name", SIMPLESYNC_FOLDER_NAME);
         folderMeta.addProperty("mimeType", "application/vnd.google-apps.folder");
@@ -699,8 +668,7 @@ public class GoogleDriveProvider implements CloudProvider {
         ensureSimpleSyncFolder();
         String accessToken = ensureValidAccessToken();
 
-        String query = String.format("name='%s' and '%s' in parents and trashed=false",
-                escapeQueryString(fileName), simpleSyncFolderId);
+        String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
         String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
@@ -741,69 +709,32 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     private HttpResponse<String> sendWithRetry(HttpRequest.Builder requestBuilder, int maxAttempts) throws IOException {
-        IOException lastError = null;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                HttpRequest request = requestBuilder.build();
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                int statusCode = response.statusCode();
-                if (statusCode == 401) {
-                    String newAccessToken = ensureValidAccessToken();
-                    requestBuilder.header("Authorization", "Bearer " + newAccessToken);
-                } else if (statusCode == 404) {
-                    simpleSyncFolderId = null;
-                    return response;
-                } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, response.body());
-                    return response;
-                } else if (statusCode >= 200 && statusCode < 300) {
-                    return response;
-                }
-                lastError = new IOException("Server returned status " + statusCode + ": " + response.body());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Operation interrupted", e);
-            } catch (IOException e) {
-                lastError = e;
+        return RetryUtil.retry(maxAttempts, "HTTP Request", () -> {
+            HttpRequest request = requestBuilder.build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int statusCode = response.statusCode();
+            if (statusCode == 401) {
+                String newAccessToken = ensureValidAccessToken();
+                requestBuilder.header("Authorization", "Bearer " + newAccessToken);
+                throw new IOException("HTTP 401 Unauthorized (refreshed access token, retrying...)");
+            } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429 && statusCode != 404) {
+                SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, response.body());
+                return response;
+            } else if ((statusCode >= 200 && statusCode < 300) || statusCode == 404) {
+                return response;
             }
-            if (attempt < maxAttempts) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}. Retrying...", attempt, maxAttempts, lastError.getMessage());
-                try {
-                    long baseDelay = 1000L * (1L << (attempt - 1));
-                    long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                    Thread.sleep(Math.max(100L, baseDelay + jitter));
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Operation interrupted during retry delay", ie);
-                }
-            }
-        }
-        throw lastError != null ? lastError : new IOException("Operation failed after retries");
+            throw new IOException("Server returned status " + statusCode + ": " + response.body());
+        });
     }
 
-    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException, InterruptedException {
-        int attempt = 0;
-        int maxAttempts = 3;
-        IOException lastEx = null;
-        while (attempt < maxAttempts) {
-            attempt++;
-            try {
-                HttpResponse<String> resp = rawPost(url, body);
-                if (resp.statusCode() >= 500) {
-                    lastEx = new IOException("Google server returned HTTP " + resp.statusCode());
-                } else {
-                    return resp;
-                }
-            } catch (IOException e) {
-                lastEx = e;
+    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException {
+        return RetryUtil.retry(3, "OAuth POST", () -> {
+            HttpResponse<String> resp = rawPost(url, body);
+            if (resp.statusCode() >= 500) {
+                throw new IOException("Google server returned HTTP " + resp.statusCode());
             }
-            if (attempt < maxAttempts) {
-                long delay = 1000L * (1L << (attempt - 1));
-                SimpleSync.LOGGER.warn("[SimpleSync] Transient post error (attempt {}/{}), retrying in {}ms...", attempt, maxAttempts, delay);
-                Thread.sleep(delay);
-            }
-        }
-        throw lastEx;
+            return resp;
+        });
     }
 
     private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {

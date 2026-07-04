@@ -109,22 +109,24 @@ public class WorldSyncTask {
                 Files.copy(sessionLock, sessionLockBackup, StandardCopyOption.REPLACE_EXISTING);
                 backedUpLock = true;
             } catch (IOException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Could not back up session.lock, proceeding directly: {}", e.getMessage());
+                SimpleSync.LOGGER.warn("[SimpleSync] Could not back up session.lock, skipping delete: {}", e.getMessage());
             }
 
-            for (int i = 0; i < 5; i++) {
-                try {
-                    Files.delete(sessionLock);
-                    break;
-                } catch (IOException e) {
-                    if (i == 4) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Could not delete session.lock after retries: {}", e.getMessage());
-                    } else {
-                        try {
-                            Thread.sleep(100);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break;
+            if (backedUpLock) {
+                for (int i = 0; i < 5; i++) {
+                    try {
+                        Files.delete(sessionLock);
+                        break;
+                    } catch (IOException e) {
+                        if (i == 4) {
+                            SimpleSync.LOGGER.warn("[SimpleSync] Could not delete session.lock after retries: {}", e.getMessage());
+                        } else {
+                            try {
+                                Thread.sleep(100);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
                         }
                     }
                 }
