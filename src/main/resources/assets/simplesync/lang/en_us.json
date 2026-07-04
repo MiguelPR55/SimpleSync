@@ -39,7 +39,7 @@
   "simplesync.tutorial.step3": "3. OAuth Consent Screen: External / Test / Add 'drive.file' scope.",
   "simplesync.tutorial.step4": "4. In that same screen, add your Google account under 'Test Users'.",
   "simplesync.tutorial.step5": "5. Click 'Publish App' to avoid tokens expiring every 7 days.",
-  "simplesync.tutorial.step6": "6. Go to Credentials -> Create Credentials -> OAuth Client ID (Desktop App).",
+  "simplesync.tutorial.step6": "6. Go to Credentials -> Create Credentials -> OAuth Client ID (TV / Limited Input).",
   "simplesync.tutorial.step7": "7. Download the JSON, rename it to 'client_secret.json'.",
   "simplesync.tutorial.step8": "8. Place it in §b§nconfig/simplesync/§r, click Connect, and enter the code shown.",
   "simplesync.tutorial.back": "Back",
