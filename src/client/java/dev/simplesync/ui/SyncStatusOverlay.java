@@ -3,10 +3,10 @@ package dev.simplesync.ui;
 import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.sync.StatusSnapshot;
 import dev.simplesync.sync.SyncStatus;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.network.chat.Component;
 
 /**
  * HUD overlay that displays the current sync status.
@@ -26,7 +26,7 @@ public class SyncStatusOverlay {
         return INSTANCE;
     }
 
-    public void renderOverlay(DrawContext drawContext) {
+    public void renderOverlay(GuiGraphicsExtractor extractor) {
         CloudSyncManager manager = CloudSyncManager.getInstance();
         StatusSnapshot snapshot = manager.getStatusSnapshot();
         SyncStatus status = snapshot.status();
@@ -45,16 +45,16 @@ public class SyncStatusOverlay {
             }
         }
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        TextRenderer textRenderer = client.textRenderer;
-        String statusText = Text.translatable(status.getTranslationKey()).getString();
+        Minecraft client = Minecraft.getInstance();
+        Font font = client.font;
+        String statusText = Component.translatable(status.getTranslationKey()).getString();
         String detail = snapshot.detail();
         String message = detail != null && !detail.isEmpty() ? statusText + " (" + detail + ")" : statusText;
         String icon = getStatusIcon(status);
         String displayText = icon.isEmpty() ? message : icon + " " + message;
 
-        int textWidth = textRenderer.getWidth(displayText);
-        int screenWidth = drawContext.getScaledWindowWidth();
+        int textWidth = font.width(displayText);
+        int screenWidth = extractor.guiWidth();
 
         int x = screenWidth - textWidth - MARGIN - PADDING * 2;
         int y = MARGIN;
@@ -78,26 +78,26 @@ public class SyncStatusOverlay {
         int textColor = getStatusColor(status) | (alpha << 24);
 
         // Draw background
-        drawContext.fill(
+        extractor.fill(
                 x - PADDING,
                 y - PADDING,
                 x + textWidth + PADDING,
-                y + textRenderer.fontHeight + PADDING,
+                y + font.lineHeight + PADDING,
                 bgColor
         );
 
         // Draw border accent
         int borderColor = getStatusColor(status) | (Math.min(alpha, 120) << 24);
-        drawContext.fill(
+        extractor.fill(
                 x - PADDING - 2,
                 y - PADDING,
                 x - PADDING,
-                y + textRenderer.fontHeight + PADDING,
+                y + font.lineHeight + PADDING,
                 borderColor
         );
 
         // Draw text
-        drawContext.drawText(textRenderer, displayText, x, y, textColor, true);
+        extractor.text(font, displayText, x, y, textColor, true);
     }
 
     private String getStatusIcon(SyncStatus status) {

@@ -369,7 +369,7 @@ public class GoogleDriveProvider implements CloudProvider {
         final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
         GoogleClientSecrets secrets = loadClientSecrets();
         if (secrets == null) {
-            return;
+            throw new IOException("client_secret.json is missing! Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
         }
 
         GoogleAuthorizationCodeFlow flow = createFlow(transport, secrets);

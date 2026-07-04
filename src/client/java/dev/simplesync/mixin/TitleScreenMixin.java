@@ -3,7 +3,7 @@ package dev.simplesync.mixin;
 import dev.simplesync.SimpleSync;
 import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.config.SyncConfig;
-import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
