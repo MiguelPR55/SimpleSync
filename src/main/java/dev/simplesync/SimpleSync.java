@@ -4,7 +4,7 @@ import dev.simplesync.cloud.CloudSyncManager;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.WorldSavePath;
+import net.minecraft.world.level.storage.LevelResource;
 import dev.simplesync.config.SyncConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +26,7 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             if (isIntegratedServer(server)) {
-                lastWorldName = server.getSavePath(WorldSavePath.ROOT)
+                lastWorldName = server.getWorldPath(LevelResource.ROOT)
                         .normalize().getFileName().toString();
                 LOGGER.info("[SimpleSync] World starting: {}", lastWorldName);
             }
@@ -45,7 +45,7 @@ public class SimpleSync implements ModInitializer {
     }
 
     private static boolean isIntegratedServer(MinecraftServer server) {
-        return !server.isDedicated();
+        return !server.isDedicatedServer();
     }
 
     public static String getLastWorldName() {
@@ -71,14 +71,14 @@ public class SimpleSync implements ModInitializer {
                 Desktop.getDesktop().browse(uri);
             } else {
                 // Fallback to Minecraft's built-in utility
-                net.minecraft.util.Util.getOperatingSystem().open(uri);
+                net.minecraft.util.Util.getPlatform().openUri(uri);
             }
             LOGGER.info("[SimpleSync] Opened URL in browser: {}", url);
             return true;
         } catch (Exception e) {
             LOGGER.warn("[SimpleSync] Failed to open URL via Desktop API, falling back to Minecraft Util API: {}", e.getMessage());
             try {
-                net.minecraft.util.Util.getOperatingSystem().open(uri);
+                net.minecraft.util.Util.getPlatform().openUri(uri);
                 return true;
             } catch (Exception ex) {
                 LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);

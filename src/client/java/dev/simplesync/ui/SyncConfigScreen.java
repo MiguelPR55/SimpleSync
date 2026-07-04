@@ -3,10 +3,10 @@ package dev.simplesync.ui;
 import dev.simplesync.SimpleSync;
 import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.config.SyncConfig;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
@@ -26,7 +26,7 @@ public class SyncConfigScreen extends Screen {
     private String authError = null;
 
     public SyncConfigScreen(Screen parent) {
-        super(Text.translatable("simplesync.config.title"));
+        super(Component.translatable("simplesync.config.title"));
         this.parent = parent;
         this.config = SyncConfig.load();
     }
@@ -36,9 +36,10 @@ public class SyncConfigScreen extends Screen {
         this.rebuildWidgets();
     }
 
-    private void rebuildWidgets() {
+    @Override
+    protected void rebuildWidgets() {
         // Clear existing widgets
-        this.clearChildren();
+        this.clearWidgets();
 
         int centerX = this.width / 2;
         int centerY = this.height / 2;
@@ -46,27 +47,27 @@ public class SyncConfigScreen extends Screen {
         if (showingTutorial) {
             int buttonWidth = 150;
             // Add Open Console button
-            this.addDrawableChild(ButtonWidget.builder(
-                    Text.literal("Google Cloud Console"),
+            this.addRenderableWidget(Button.builder(
+                    Component.literal("Google Cloud Console"),
                     button -> SimpleSync.openUrl("https://console.cloud.google.com/"))
-                    .dimensions(centerX - buttonWidth - 5, this.height - 65, buttonWidth, 20)
+                    .bounds(centerX - buttonWidth - 5, this.height - 65, buttonWidth, 20)
                     .build());
 
             // Add Open Drive API library button
-            this.addDrawableChild(ButtonWidget.builder(
-                    Text.literal("Google Drive API Library"),
+            this.addRenderableWidget(Button.builder(
+                    Component.literal("Google Drive API Library"),
                     button -> SimpleSync.openUrl("https://console.cloud.google.com/apis/library/drive.googleapis.com"))
-                    .dimensions(centerX + 5, this.height - 65, buttonWidth, 20)
+                    .bounds(centerX + 5, this.height - 65, buttonWidth, 20)
                     .build());
 
             // Add Back button to return to configuration options
-            this.addDrawableChild(ButtonWidget.builder(
-                    Text.translatable("simplesync.tutorial.back"),
+            this.addRenderableWidget(Button.builder(
+                    Component.translatable("simplesync.tutorial.back"),
                     button -> {
                         showingTutorial = false;
                         this.rebuildWidgets();
                     })
-                    .dimensions(centerX - 100, this.height - 40, 200, 20)
+                    .bounds(centerX - 100, this.height - 40, 200, 20)
                     .build());
             return;
         }
@@ -74,40 +75,40 @@ public class SyncConfigScreen extends Screen {
         // --- NORMAL CONFIGURATION WIDGETS ---
         
         // Auto Sync on Start Button
-        this.addDrawableChild(ButtonWidget.builder(
+        this.addRenderableWidget(Button.builder(
                 getAutoStartText(),
                 button -> {
                     config.autoSyncOnStart = !config.autoSyncOnStart;
                     config.save();
                     button.setMessage(getAutoStartText());
                 })
-                .dimensions(centerX - 100, centerY - 55, 200, 20)
+                .bounds(centerX - 100, centerY - 55, 200, 20)
                 .build());
 
         // Auto Sync on Exit Button
-        this.addDrawableChild(ButtonWidget.builder(
+        this.addRenderableWidget(Button.builder(
                 getAutoExitText(),
                 button -> {
                     config.autoSyncOnExit = !config.autoSyncOnExit;
                     config.save();
                     button.setMessage(getAutoExitText());
                 })
-                .dimensions(centerX - 100, centerY - 30, 200, 20)
+                .bounds(centerX - 100, centerY - 30, 200, 20)
                 .build());
 
         // Google Drive Account Sync/Authentication Button
         authenticated = !authenticating && CloudSyncManager.getInstance().getProvider().isAuthenticated();
-
-        Text authBtnText;
+        
+        Component authBtnText;
         if (authenticating) {
-            authBtnText = Text.translatable("simplesync.config.connecting");
+            authBtnText = Component.translatable("simplesync.config.connecting");
         } else if (authenticated) {
-            authBtnText = Text.translatable("simplesync.config.disconnect");
+            authBtnText = Component.translatable("simplesync.config.disconnect");
         } else {
-            authBtnText = Text.translatable("simplesync.config.connect");
+            authBtnText = Component.translatable("simplesync.config.connect");
         }
 
-        ButtonWidget connectBtn = ButtonWidget.builder(authBtnText, button -> {
+        Button connectBtn = Button.builder(authBtnText, button -> {
             if (authenticated) {
                 try {
                     CloudSyncManager.getInstance().getProvider().disconnect();
@@ -122,27 +123,27 @@ public class SyncConfigScreen extends Screen {
                 startAuthenticationFlow();
             }
         })
-        .dimensions(centerX - 100, centerY + 20, 200, 20)
+        .bounds(centerX - 100, centerY + 20, 200, 20)
         .build();
 
         connectBtn.active = !authenticating;
-        this.addDrawableChild(connectBtn);
+        this.addRenderableWidget(connectBtn);
 
         // Help / Setup Tutorial Button
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.translatable("simplesync.config.tutorial_btn"),
+        this.addRenderableWidget(Button.builder(
+                Component.translatable("simplesync.config.tutorial_btn"),
                 button -> {
                     showingTutorial = true;
                     this.rebuildWidgets();
                 })
-                .dimensions(centerX - 100, centerY + 45, 200, 20)
+                .bounds(centerX - 100, centerY + 45, 200, 20)
                 .build());
 
         // Done button to close and return to previous screen
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.translatable("gui.done"),
-                button -> this.close())
-                .dimensions(centerX - 100, centerY + 80, 200, 20)
+        this.addRenderableWidget(Button.builder(
+                Component.translatable("gui.done"),
+                button -> this.onClose())
+                .bounds(centerX - 100, centerY + 80, 200, 20)
                 .build());
     }
 
@@ -163,8 +164,8 @@ public class SyncConfigScreen extends Screen {
     }
 
     private void onAuthenticationComplete(boolean success, Exception e) {
-        if (this.client == null) return;
-        this.client.execute(() -> {
+        if (this.minecraft == null) return;
+        this.minecraft.execute(() -> {
             authenticating = false;
             authenticated = success;
             if (!success && e != null) {
@@ -177,94 +178,94 @@ public class SyncConfigScreen extends Screen {
             } else {
                 authError = null;
             }
-            if (this.client.currentScreen instanceof dev.simplesync.ui.DeviceAuthScreen) {
-                this.client.setScreen(this);
+            if (this.minecraft.screen instanceof dev.simplesync.ui.DeviceAuthScreen) {
+                this.minecraft.setScreen(this);
             }
             this.rebuildWidgets();
         });
     }
 
-    private Text getAutoStartText() {
+    private Component getAutoStartText() {
         String state = config.autoSyncOnStart ? "ON" : "OFF";
-        return Text.translatable("simplesync.config.auto_start", state);
+        return Component.translatable("simplesync.config.auto_start", state);
     }
 
-    private Text getAutoExitText() {
+    private Component getAutoExitText() {
         String state = config.autoSyncOnExit ? "ON" : "OFF";
-        return Text.translatable("simplesync.config.auto_exit", state);
+        return Component.translatable("simplesync.config.auto_exit", state);
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float delta) {
+        super.extractRenderState(extractor, mouseX, mouseY, delta);
 
         int centerX = this.width / 2;
 
         if (showingTutorial) {
             // --- DRAW TUTORIAL GUIDE SCREEN ---
-            context.drawCenteredTextWithShadow(this.textRenderer,
-                    Text.translatable("simplesync.tutorial.title"), centerX, 20, 0xFFFFFF);
+            extractor.centeredText(this.font,
+                    Component.translatable("simplesync.tutorial.title"), centerX, 20, 0xFFFFFF);
 
             int startY = 45;
             int stepGap = 18;
 
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step1"), centerX, startY, 0xDDDDDD);
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap, 0xDDDDDD);
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2, 0xDDDDDD);
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 3, 0xDDDDDD);
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 4, 0xDDDDDD);
-            context.drawCenteredTextWithShadow(this.textRenderer, Text.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 5, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step1"), centerX, startY, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 3, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 4, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 5, 0xDDDDDD);
             return;
         }
 
         // --- DRAW NORMAL CONFIGURATION OPTIONS SCREEN ---
-        context.drawCenteredTextWithShadow(this.textRenderer,
+        extractor.centeredText(this.font,
                 this.title, centerX, 25, 0xFFFFFF);
 
         int centerY = this.height / 2;
 
-        Text statusTextVal;
+        Component statusTextVal;
         int statusColor;
 
         if (authenticating) {
-            statusTextVal = Text.translatable("simplesync.config.connecting");
+            statusTextVal = Component.translatable("simplesync.config.connecting");
             statusColor = 0xFFD54F; // Yellow
         } else if (authenticated) {
-            statusTextVal = Text.translatable("simplesync.config.status.connected");
+            statusTextVal = Component.translatable("simplesync.config.status.connected");
             statusColor = 0x81C784; // Green
         } else {
-            statusTextVal = Text.translatable("simplesync.config.status.disconnected");
+            statusTextVal = Component.translatable("simplesync.config.status.disconnected");
             statusColor = 0xFFD54F; // Yellow
         }
 
-        Text statusText = Text.translatable("simplesync.config.status", statusTextVal.getString());
-        context.drawCenteredTextWithShadow(this.textRenderer, statusText, centerX, centerY - 2, statusColor);
+        Component statusText = Component.translatable("simplesync.config.status", statusTextVal);
+        extractor.centeredText(this.font, statusText, centerX, centerY - 2, statusColor);
 
         // Draw authentication errors if any
         if (authError != null) {
-            Text errText = Text.translatable("simplesync.config.auth_failed", authError);
-            context.drawCenteredTextWithShadow(this.textRenderer, errText, centerX, centerY + 2, 0xE57373);
+            Component errText = Component.translatable("simplesync.config.auth_failed", authError);
+            extractor.centeredText(this.font, errText, centerX, centerY + 2, 0xE57373);
         }
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (showingTutorial && button == 0) {
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
+        if (showingTutorial && event.button() == 0) {
             int centerX = this.width / 2;
             int startY = 45;
             // Use a generous and robust click box around the center of the first step
-            if (mouseY >= startY - 4 && mouseY <= startY + 14 && mouseX >= centerX - 150 && mouseX <= centerX + 150) {
+            if (event.y() >= startY - 4 && event.y() <= startY + 14 && event.x() >= centerX - 150 && event.x() <= centerX + 150) {
                 SimpleSync.openUrl("https://console.cloud.google.com/");
                 return true;
             }
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
-    public void close() {
-        if (this.client != null) {
-            this.client.setScreen(this.parent);
+    public void onClose() {
+        if (this.minecraft != null) {
+            this.minecraft.setScreen(this.parent);
         }
     }
 }
