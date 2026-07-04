@@ -45,21 +45,6 @@ public class SyncConfigScreen extends Screen {
         int centerY = this.height / 2;
 
         if (showingTutorial) {
-            int buttonWidth = 150;
-            // Add Open Console button
-            this.addRenderableWidget(Button.builder(
-                    Component.literal("Google Cloud Console"),
-                    button -> SimpleSync.openUrl("https://console.cloud.google.com/"))
-                    .bounds(centerX - buttonWidth - 5, this.height - 65, buttonWidth, 20)
-                    .build());
-
-            // Add Open Drive API library button
-            this.addRenderableWidget(Button.builder(
-                    Component.literal("Google Drive API Library"),
-                    button -> SimpleSync.openUrl("https://console.cloud.google.com/apis/library/drive.googleapis.com"))
-                    .bounds(centerX + 5, this.height - 65, buttonWidth, 20)
-                    .build());
-
             // Add Back button to return to configuration options
             this.addRenderableWidget(Button.builder(
                     Component.translatable("simplesync.tutorial.back"),
@@ -67,7 +52,7 @@ public class SyncConfigScreen extends Screen {
                         showingTutorial = false;
                         this.rebuildWidgets();
                     })
-                    .bounds(centerX - 100, this.height - 40, 200, 20)
+                    .bounds(centerX - 100, this.height - 45, 200, 20)
                     .build());
             return;
         }
@@ -253,9 +238,19 @@ public class SyncConfigScreen extends Screen {
         if (showingTutorial && event.button() == 0) {
             int centerX = this.width / 2;
             int startY = 45;
-            // Use a generous and robust click box around the center of the first step
-            if (event.y() >= startY - 4 && event.y() <= startY + 14 && event.x() >= centerX - 150 && event.x() <= centerX + 150) {
-                SimpleSync.openUrl("https://console.cloud.google.com/");
+            int stepGap = 18;
+
+            // Step 1: console.cloud.google.com
+            int step1Width = this.font.width(Component.translatable("simplesync.tutorial.step1"));
+            if (event.y() >= startY - 4 && event.y() <= startY + 14 && event.x() >= centerX - step1Width / 2 && event.x() <= centerX + step1Width / 2) {
+                net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, "https://console.cloud.google.com/");
+                return true;
+            }
+
+            // Step 2: Google Drive API Library
+            int step2Width = this.font.width(Component.translatable("simplesync.tutorial.step2"));
+            if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 14 && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
+                net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
                 return true;
             }
         }

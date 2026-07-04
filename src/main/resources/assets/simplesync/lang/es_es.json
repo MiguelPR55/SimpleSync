@@ -35,7 +35,7 @@
   "simplesync.config.auth_failed": "Error de autenticación: %s",
   "simplesync.tutorial.title": "Guía de Configuración de Google Drive API",
   "simplesync.tutorial.step1": "1. Ve a §b§nconsole.cloud.google.com§r y crea un proyecto.",
-  "simplesync.tutorial.step2": "2. Busca 'Google Drive API' y haz clic en Habilitar.",
+  "simplesync.tutorial.step2": "2. Busca '§b§nGoogle Drive API§r' y haz clic en Habilitar.",
   "simplesync.tutorial.step3": "3. Configura Pantalla de Consentimiento (Externo / Modo prueba / Permiso 'drive.file').",
   "simplesync.tutorial.step4": "4. Ve a Credenciales -> Crear Credenciales -> ID de cliente OAuth (TV / Escritorio).",
   "simplesync.tutorial.step5": "5. Descarga el JSON, renombralo a 'client_secret.json'.",
