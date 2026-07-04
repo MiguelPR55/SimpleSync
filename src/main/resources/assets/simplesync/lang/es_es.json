@@ -39,7 +39,7 @@
   "simplesync.tutorial.step3": "3. Configura Pantalla de Consentimiento (Externo / Modo prueba / Permiso 'drive.file').",
   "simplesync.tutorial.step4": "4. Ve a Credenciales -> Crear Credenciales -> ID de cliente OAuth (TV / Escritorio).",
   "simplesync.tutorial.step5": "5. Descarga el JSON, renombralo a 'client_secret.json'.",
-  "simplesync.tutorial.step6": "6. Colócalo en config/simplesync/, pulsa Conectar, e introduce el código mostrado.",
+  "simplesync.tutorial.step6": "6. Colócalo en §b§nconfig/simplesync/§r, pulsa Conectar, e introduce el código mostrado.",
   "simplesync.tutorial.back": "Volver",
   "simplesync.auth.title": "Autorización de Google Drive Requerida",
   "simplesync.auth.url_instruction": "1. Visita la URL de autorización de Google:",

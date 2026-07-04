@@ -67,7 +67,7 @@ public class SyncConfigScreen extends Screen {
                     config.save();
                     button.setMessage(getAutoStartText());
                 })
-                .bounds(centerX - 100, centerY - 55, 200, 20)
+                .bounds(centerX - 100, centerY - 65, 200, 20)
                 .build());
 
         // Auto Sync on Exit Button
@@ -78,7 +78,7 @@ public class SyncConfigScreen extends Screen {
                     config.save();
                     button.setMessage(getAutoExitText());
                 })
-                .bounds(centerX - 100, centerY - 30, 200, 20)
+                .bounds(centerX - 100, centerY - 40, 200, 20)
                 .build());
 
         // Google Drive Account Sync/Authentication Button
@@ -108,7 +108,7 @@ public class SyncConfigScreen extends Screen {
                 startAuthenticationFlow();
             }
         })
-        .bounds(centerX - 100, centerY + 20, 200, 20)
+        .bounds(centerX - 100, centerY + 25, 200, 20)
         .build();
 
         connectBtn.active = !authenticating;
@@ -121,14 +121,14 @@ public class SyncConfigScreen extends Screen {
                     showingTutorial = true;
                     this.rebuildWidgets();
                 })
-                .bounds(centerX - 100, centerY + 45, 200, 20)
+                .bounds(centerX - 100, centerY + 50, 200, 20)
                 .build());
 
         // Done button to close and return to previous screen
         this.addRenderableWidget(Button.builder(
                 Component.translatable("gui.done"),
                 button -> this.onClose())
-                .bounds(centerX - 100, centerY + 80, 200, 20)
+                .bounds(centerX - 100, centerY + 85, 200, 20)
                 .build());
     }
 
@@ -224,12 +224,17 @@ public class SyncConfigScreen extends Screen {
         }
 
         Component statusText = Component.translatable("simplesync.config.status", statusTextVal);
-        extractor.centeredText(this.font, statusText, centerX, centerY - 2, statusColor);
+        extractor.centeredText(this.font, statusText, centerX, centerY - 15, statusColor);
 
-        // Draw authentication errors if any
+        // Draw authentication errors if any (split into multiple centered lines to avoid overlap)
         if (authError != null) {
             Component errText = Component.translatable("simplesync.config.auth_failed", authError);
-            extractor.centeredText(this.font, errText, centerX, centerY + 2, 0xFFE57373);
+            java.util.List<net.minecraft.util.FormattedCharSequence> lines = this.font.split(errText, 300);
+            int currentY = centerY - 3;
+            for (net.minecraft.util.FormattedCharSequence line : lines) {
+                extractor.centeredText(this.font, line, centerX, currentY, 0xFFE57373);
+                currentY += 9;
+            }
         }
     }
 
@@ -251,6 +256,13 @@ public class SyncConfigScreen extends Screen {
             int step2Width = this.font.width(Component.translatable("simplesync.tutorial.step2"));
             if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 14 && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
                 net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
+                return true;
+            }
+
+            // Step 6: Local config/simplesync/ Folder
+            int step6Width = this.font.width(Component.translatable("simplesync.tutorial.step6"));
+            if (event.y() >= (startY + stepGap * 5) - 4 && event.y() <= (startY + stepGap * 5) + 14 && event.x() >= centerX - step6Width / 2 && event.x() <= centerX + step6Width / 2) {
+                net.minecraft.util.Util.getPlatform().openUri(dev.simplesync.config.SyncConfig.getConfigDir().toUri());
                 return true;
             }
         }
