@@ -35,7 +35,7 @@ public class DeviceAuthScreen extends Screen {
     protected void init() {
         int centerX = this.width / 2;
         int buttonWidth = 140;
-        int buttonY = this.height / 2 + 30;
+        int buttonY = this.height / 2 + 50;
 
         // Open Browser button
         this.addRenderableWidget(Button.builder(
@@ -66,7 +66,7 @@ public class DeviceAuthScreen extends Screen {
                                 this.onClose();
                             }
                         })
-                .bounds(centerX - 100, buttonY + 30, 200, 20)
+                .bounds(centerX - 100, buttonY + 28, 200, 20)
                 .build());
     }
 
