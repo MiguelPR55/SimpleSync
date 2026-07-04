@@ -253,9 +253,9 @@ public class CloudSyncManager {
                     clearStatus();
                 }
 
-            } catch (Exception e) {
-                SimpleSync.LOGGER.error("[SimpleSync] Sync from cloud failed", e);
-                setStatus(SyncStatus.ERROR, e.getMessage() != null ? e.getMessage() : "Unknown error");
+            } catch (Throwable t) {
+                SimpleSync.LOGGER.error("[SimpleSync] Sync from cloud failed", t);
+                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
             }
         }, executor);
     }
@@ -338,9 +338,9 @@ public class CloudSyncManager {
         return CompletableFuture.runAsync(() -> {
             try {
                 uploadWorldSync(worldName);
-            } catch (Exception e) {
-                SimpleSync.LOGGER.error("[SimpleSync] Upload failed for world: {}", worldName, e);
-                setStatus(SyncStatus.ERROR, e.getMessage() != null ? e.getMessage() : "Unknown error");
+            } catch (Throwable t) {
+                SimpleSync.LOGGER.error("[SimpleSync] Upload failed for world: {}", worldName, t);
+                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
             }
         }, executor);
     }

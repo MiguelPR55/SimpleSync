@@ -141,11 +141,13 @@ public class WorldSyncTask {
             } else {
                 compressWorldTarZst(worldFolder, outputArchive);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             try {
                 Files.deleteIfExists(outputArchive);
             } catch (IOException ignored) {}
             if (e instanceof IOException ioe) throw ioe;
+            if (e instanceof RuntimeException re) throw re;
+            if (e instanceof Error err) throw err;
             throw new IOException("Compression failed", e);
         } finally {
             if (backedUpLock) {
