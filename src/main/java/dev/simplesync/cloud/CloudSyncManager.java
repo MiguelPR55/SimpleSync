@@ -148,8 +148,9 @@ public class CloudSyncManager {
                         }
 
                         long localTimestamp = config.getLastSyncTimestamp(worldName);
+                        long tolerance = localTimestamp > 0 ? 5000L : 0L;
 
-                        if (cloudWorld.lastModified() > localTimestamp || !java.nio.file.Files.isDirectory(worldFolder)) {
+                        if (cloudWorld.lastModified() > (localTimestamp + tolerance) || !java.nio.file.Files.isDirectory(worldFolder)) {
                             if (!java.nio.file.Files.isDirectory(worldFolder)) {
                                 if (localTimestamp > 0) {
                                     SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted locally (previous sync timestamp found). Deleting from cloud...", worldName);
@@ -319,9 +320,7 @@ public class CloudSyncManager {
             }
 
             long newTimestamp = uploadedMeta != null && uploadedMeta.lastModified() > 0 ? uploadedMeta.lastModified() : System.currentTimeMillis();
-            config.setLastSyncTimestamp(worldName, newTimestamp);
-            config.setLastLocalSize(worldName, stats.size());
-            config.setLastLocalMtime(worldName, stats.latestModifiedTime());
+            updateWorldTracking(config, worldName, worldFolder, newTimestamp);
             config.save();
 
             setStatus(SyncStatus.DONE, "");

@@ -152,22 +152,15 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         String method = isUpdate ? "PATCH" : "POST";
-        HttpRequest initRequest = HttpRequest.newBuilder(URI.create(initUrl))
+        HttpRequest.Builder initReqBuilder = HttpRequest.newBuilder(URI.create(initUrl))
                 .method(method, HttpRequest.BodyPublishers.ofString(metadata.toString()))
                 .header("Authorization", "Bearer " + accessToken)
                 .header("Content-Type", "application/json; charset=UTF-8")
                 .header("X-Upload-Content-Type", mimeType)
                 .header("X-Upload-Content-Length", String.valueOf(fileSize))
-                .timeout(Duration.ofSeconds(30))
-                .build();
+                .timeout(Duration.ofSeconds(30));
 
-        HttpResponse<String> initResponse;
-        try {
-            initResponse = httpClient.send(initRequest, HttpResponse.BodyHandlers.ofString());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Upload interrupted", e);
-        }
+        HttpResponse<String> initResponse = sendWithRetry(initReqBuilder, 3);
 
         if (initResponse.statusCode() != 200 && initResponse.statusCode() != 201) {
             if (isUpdate && initResponse.statusCode() == 404) {
@@ -231,9 +224,21 @@ public class GoogleDriveProvider implements CloudProvider {
             }
         };
 
+        HttpRequest.BodyPublisher delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
+        HttpRequest.BodyPublisher bodyPublisher = new HttpRequest.BodyPublisher() {
+            @Override
+            public long contentLength() {
+                return fileSize;
+            }
+
+            @Override
+            public void subscribe(java.util.concurrent.Flow.Subscriber<? super java.nio.ByteBuffer> subscriber) {
+                delegate.subscribe(subscriber);
+            }
+        };
+
         HttpRequest request = HttpRequest.newBuilder(URI.create(sessionUrl))
-                .PUT(HttpRequest.BodyPublishers.ofInputStream(supplier))
-                .header("Content-Length", String.valueOf(fileSize))
+                .PUT(bodyPublisher)
                 .timeout(Duration.ofMinutes(15))
                 .build();
 
@@ -265,14 +270,13 @@ public class GoogleDriveProvider implements CloudProvider {
         Files.deleteIfExists(outputArchive);
 
         String accessToken = ensureValidAccessToken();
-        HttpRequest request = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + targetFileId + "?alt=media"))
+        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + targetFileId + "?alt=media"))
                 .GET()
                 .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofMinutes(15))
-                .build();
+                .timeout(Duration.ofMinutes(15));
 
         try {
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            HttpResponse<InputStream> response = sendWithRetry(reqBuilder, HttpResponse.BodyHandlers.ofInputStream(), 3);
             if (response.statusCode() != 200) {
                 throw new IOException("Download failed: HTTP " + response.statusCode());
             }
@@ -284,12 +288,12 @@ public class GoogleDriveProvider implements CloudProvider {
                     os.write(buffer, 0, len);
                 }
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
-            throw new IOException("Download interrupted", e);
         } catch (Exception e) {
             try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
+            if (e instanceof IOException ioe && e.getCause() instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                throw ioe;
+            }
             throw new IOException("Download failed: " + e.getMessage(), e);
         }
 
@@ -582,12 +586,11 @@ public class GoogleDriveProvider implements CloudProvider {
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
             if (isSafeDriveFileId(savedFolderId)) {
                 try {
-                    HttpRequest checkRequest = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + savedFolderId + "?fields=id,trashed"))
+                    HttpRequest.Builder checkReqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + savedFolderId + "?fields=id,trashed"))
                             .GET()
                             .header("Authorization", "Bearer " + accessToken)
-                            .timeout(Duration.ofSeconds(15))
-                            .build();
-                    HttpResponse<String> checkResp = httpClient.send(checkRequest, HttpResponse.BodyHandlers.ofString());
+                            .timeout(Duration.ofSeconds(15));
+                    HttpResponse<String> checkResp = sendWithRetry(checkReqBuilder, 3);
                     if (checkResp.statusCode() == 200) {
                         JsonObject folder = JsonParser.parseString(checkResp.body()).getAsJsonObject();
                         if (folder != null && (!folder.has("trashed") || !folder.get("trashed").getAsBoolean())) {
@@ -610,14 +613,13 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = buildQuery("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", SIMPLESYNC_FOLDER_NAME);
         String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=createdTime";
         
-        HttpRequest searchRequest = HttpRequest.newBuilder(URI.create(searchUrl))
+        HttpRequest.Builder searchReqBuilder = HttpRequest.newBuilder(URI.create(searchUrl))
                 .GET()
                 .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30))
-                .build();
+                .timeout(Duration.ofSeconds(30));
         
         try {
-            HttpResponse<String> searchResp = httpClient.send(searchRequest, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> searchResp = sendWithRetry(searchReqBuilder, 3);
             if (searchResp.statusCode() == 200) {
                 JsonObject body = JsonParser.parseString(searchResp.body()).getAsJsonObject();
                 JsonArray files = body.getAsJsonArray("files");
@@ -637,15 +639,14 @@ public class GoogleDriveProvider implements CloudProvider {
         folderMeta.addProperty("name", SIMPLESYNC_FOLDER_NAME);
         folderMeta.addProperty("mimeType", "application/vnd.google-apps.folder");
 
-        HttpRequest createRequest = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files?fields=id"))
+        HttpRequest.Builder createReqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files?fields=id"))
                 .POST(HttpRequest.BodyPublishers.ofString(folderMeta.toString()))
                 .header("Authorization", "Bearer " + accessToken)
                 .header("Content-Type", "application/json; charset=UTF-8")
-                .timeout(Duration.ofSeconds(30))
-                .build();
+                .timeout(Duration.ofSeconds(30));
 
         try {
-            HttpResponse<String> createResp = httpClient.send(createRequest, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> createResp = sendWithRetry(createReqBuilder, 3);
             if (createResp.statusCode() == 200 || createResp.statusCode() == 201) {
                 JsonObject folder = JsonParser.parseString(createResp.body()).getAsJsonObject();
                 simpleSyncFolderId = folder.get("id").getAsString();
@@ -671,14 +672,13 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
         String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
                 .GET()
                 .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30))
-                .build();
+                .timeout(Duration.ofSeconds(30));
 
         try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
             if (response.statusCode() == 200) {
                 JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
                 JsonArray files = body.getAsJsonArray("files");
@@ -708,23 +708,35 @@ public class GoogleDriveProvider implements CloudProvider {
         return str != null ? str.replace("\\", "\\\\").replace("'", "\\'") : "";
     }
 
-    private HttpResponse<String> sendWithRetry(HttpRequest.Builder requestBuilder, int maxAttempts) throws IOException {
+    private <T> HttpResponse<T> sendWithRetry(HttpRequest.Builder requestBuilder, HttpResponse.BodyHandler<T> responseBodyHandler, int maxAttempts) throws IOException {
         return RetryUtil.retry(maxAttempts, "HTTP Request", () -> {
             HttpRequest request = requestBuilder.build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<T> response = httpClient.send(request, responseBodyHandler);
             int statusCode = response.statusCode();
             if (statusCode == 401) {
                 String newAccessToken = ensureValidAccessToken();
                 requestBuilder.header("Authorization", "Bearer " + newAccessToken);
                 throw new IOException("HTTP 401 Unauthorized (refreshed access token, retrying...)");
             } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429 && statusCode != 404) {
-                SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, response.body());
+                if (response.body() instanceof String strBody) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, strBody);
+                } else {
+                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({})", statusCode);
+                }
                 return response;
             } else if ((statusCode >= 200 && statusCode < 300) || statusCode == 404) {
                 return response;
             }
-            throw new IOException("Server returned status " + statusCode + ": " + response.body());
+            if (response.body() instanceof String strBody) {
+                throw new IOException("Server returned status " + statusCode + ": " + strBody);
+            } else {
+                throw new IOException("Server returned status " + statusCode);
+            }
         });
+    }
+
+    private HttpResponse<String> sendWithRetry(HttpRequest.Builder requestBuilder, int maxAttempts) throws IOException {
+        return sendWithRetry(requestBuilder, HttpResponse.BodyHandlers.ofString(), maxAttempts);
     }
 
     private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException {
