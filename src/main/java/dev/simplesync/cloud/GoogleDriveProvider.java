@@ -1,47 +1,39 @@
 package dev.simplesync.cloud;
 
-import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
-import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
-import com.google.api.client.http.FileContent;
-import com.google.api.client.http.javanet.NetHttpTransport;
-import com.google.api.client.json.JsonFactory;
-import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.client.util.store.FileDataStoreFactory;
-import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.DriveScopes;
-import com.google.api.services.drive.model.File;
-import com.google.api.services.drive.model.FileList;
-import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
+
 import java.io.*;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.GeneralSecurityException;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 /**
- * Google Drive implementation of CloudProvider.
- * Uses OAuth2 for authentication and stores worlds as ZIP files in a dedicated folder.
+ * Google Drive implementation of CloudProvider using Java's native HttpClient and REST API.
+ * Uses OAuth2 Device Auth and stores files in a dedicated folder.
  */
 public class GoogleDriveProvider implements CloudProvider {
 
-    private static final String APPLICATION_NAME = "SimpleSync Minecraft Mod";
-    private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
-    private static final List<String> SCOPES = Collections.singletonList(DriveScopes.DRIVE_FILE);
     private static final String SIMPLESYNC_FOLDER_NAME = "SimpleSync";
     private static final String ZIP_MIME_TYPE = "application/zip";
     private static final String TAR_ZST_MIME_TYPE = "application/zstd";
@@ -49,12 +41,15 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private final Path credentialsDir;
     private final Map<String, String> fileIdCache = new ConcurrentHashMap<>();
-    private volatile Drive driveService;
+    private final HttpClient httpClient;
     private volatile String simpleSyncFolderId;
     private final AtomicBoolean isAuthenticating = new AtomicBoolean(false);
 
     public GoogleDriveProvider() {
         this.credentialsDir = SyncConfig.getConfigDir().resolve("credentials");
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .build();
     }
 
     @Override
@@ -65,39 +60,22 @@ public class GoogleDriveProvider implements CloudProvider {
     @Override
     public synchronized boolean isAuthenticated() {
         try {
-            if (driveService != null) {
-                // Verify the credential is still usable
-                return verifyDriveServiceCredential();
-            }
-            return initializeDriveServiceOffline();
-        } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Error checking authentication status", e);
-            return false;
-        }
-    }
-
-    /**
-     * Verifies that the current driveService has a valid (or refreshable) credential.
-     */
-    private synchronized boolean verifyDriveServiceCredential() {
-        try {
-            Credential cred = driveService.getRequestFactory().getInitializer() instanceof Credential c ? c : null;
-            if (cred == null) {
-                return false; // Do not assume valid if cannot inspect credential
-            }
-            if (cred.getRefreshToken() == null && cred.getAccessToken() == null) {
+            TokenStore.TokenData tokens = TokenStore.load();
+            if (tokens == null) {
                 return false;
             }
-            Long expiresIn = cred.getExpiresInSeconds();
-            if (expiresIn != null && expiresIn <= 60) {
-                if (cred.getRefreshToken() != null) {
-                    return cred.refreshToken();
+            if (System.currentTimeMillis() >= tokens.expiresAtMs - 300000) {
+                // Try to refresh token
+                try {
+                    ensureValidAccessToken();
+                    return true;
+                } catch (Exception e) {
+                    return false;
                 }
-                return false;
             }
             return true;
         } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Failed to verify credential: {}", e.getMessage());
+            SimpleSync.LOGGER.error("[SimpleSync] Error checking authentication status", e);
             return false;
         }
     }
@@ -116,14 +94,24 @@ public class GoogleDriveProvider implements CloudProvider {
             throw new IOException("Authentication is already in progress.");
         }
         try {
-            initializeDriveService();
-            if (driveService == null) {
-                throw new IOException("Failed to initialize Google Drive service");
+            ClientSecrets secrets = loadClientSecrets();
+            if (secrets == null) {
+                throw new IOException("client_secret.json is missing! Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
             }
+            ClientSecrets.Details details = secrets.getDetails();
+
+            new DeviceCodeAuthenticator().authenticate(
+                    details.client_id,
+                    details.client_secret,
+                    "https://www.googleapis.com/auth/drive.file",
+                    CloudSyncManager.getInstance().getAuthPromptCallback()
+            );
+
             ensureSimpleSyncFolder();
             SimpleSync.LOGGER.info("[SimpleSync] Successfully authenticated with Google Drive");
-        } catch (GeneralSecurityException e) {
-            throw new IOException("Security error during authentication", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Authentication flow was interrupted", e);
         } finally {
             isAuthenticating.set(false);
         }
@@ -131,99 +119,173 @@ public class GoogleDriveProvider implements CloudProvider {
 
     @Override
     public WorldMetadata upload(String worldName, Path zipFile) throws IOException {
+        int maxAttempts = 3;
+        IOException lastError = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return uploadOnce(worldName, zipFile);
+            } catch (IOException e) {
+                lastError = e;
+                SimpleSync.LOGGER.warn("[SimpleSync] Upload attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt < maxAttempts) {
+                    try {
+                        long baseDelay = 1000L * (1L << (attempt - 1));
+                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+                        Thread.sleep(Math.max(100L, baseDelay + jitter));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Upload interrupted during retry delay", ie);
+                    }
+                }
+            }
+        }
+        throw lastError != null ? lastError : new IOException("Upload failed after retries");
+    }
+
+    private WorldMetadata uploadOnce(String worldName, Path zipFile) throws IOException {
         validateWorldName(worldName);
-        ensureAuthenticated();
         ensureSimpleSyncFolder();
 
         boolean isZip = zipFile.getFileName().toString().endsWith(".zip");
         String fileName = worldName + (isZip ? ".zip" : ".tar.zst");
         String mimeType = isZip ? ZIP_MIME_TYPE : TAR_ZST_MIME_TYPE;
+        long fileSize = Files.size(zipFile);
 
         SimpleSync.LOGGER.info("[SimpleSync] Uploading {} to Google Drive...", fileName);
 
         String existingFileId = findFileId(fileName);
+        boolean isUpdate = existingFileId != null;
 
-        File fileMetadata = new File();
-        fileMetadata.setName(fileName);
+        String accessToken = ensureValidAccessToken();
+        String initUrl = isUpdate
+                ? "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=resumable&fields=id,name,modifiedTime,size"
+                : "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
 
-        FileContent mediaContent = new FileContent(mimeType, zipFile.toFile());
+        JsonObject metadata = new JsonObject();
+        metadata.addProperty("name", fileName);
+        if (!isUpdate) {
+            JsonArray parents = new JsonArray();
+            parents.add(simpleSyncFolderId);
+            metadata.add("parents", parents);
+        }
 
-        File uploadedFile = null;
-        if (existingFileId != null) {
-            try {
-                final String fileIdToUpdate = existingFileId;
-                uploadedFile = withRetry(() -> {
-                    Drive.Files.Update request = driveService.files().update(fileIdToUpdate, fileMetadata, mediaContent)
-                            .setFields("id, name, modifiedTime, size");
-                    request.getMediaHttpUploader().setProgressListener(uploader -> {
-                        switch (uploader.getUploadState()) {
-                            case MEDIA_IN_PROGRESS -> {
-                                int percent = (int) (uploader.getProgress() * 100);
-                                CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
-                            }
-                            case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
-                            default -> {}
-                        }
-                    });
-                    return request.execute();
-                }, 3);
-                SimpleSync.LOGGER.info("[SimpleSync] Updated existing file: {} (ID: {})", fileName, uploadedFile.getId());
-            } catch (GoogleJsonResponseException e) {
-                if (e.getStatusCode() == 404) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] Google Drive file ID {} was not found (404). Falling back to create...", existingFileId);
-                    fileIdCache.remove(fileName);
-                    existingFileId = null;
-                } else {
-                    throw e;
-                }
+        String method = isUpdate ? "PATCH" : "POST";
+        HttpRequest initRequest = HttpRequest.newBuilder(URI.create(initUrl))
+                .method(method, HttpRequest.BodyPublishers.ofString(metadata.toString()))
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", "application/json; charset=UTF-8")
+                .header("X-Upload-Content-Type", mimeType)
+                .header("X-Upload-Content-Length", String.valueOf(fileSize))
+                .timeout(Duration.ofSeconds(30))
+                .build();
+
+        HttpResponse<String> initResponse;
+        try {
+            initResponse = httpClient.send(initRequest, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Upload interrupted", e);
+        }
+
+        if (initResponse.statusCode() != 200 && initResponse.statusCode() != 201) {
+            if (isUpdate && initResponse.statusCode() == 404) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Google Drive file ID {} not found. Falling back to create...", existingFileId);
+                fileIdCache.remove(fileName);
+                return uploadOnce(worldName, zipFile);
             }
+            throw new IOException("Failed to initialize resumable upload: HTTP " + initResponse.statusCode() + " - " + initResponse.body());
         }
-        if (existingFileId == null) {
-            fileMetadata.setParents(Collections.singletonList(simpleSyncFolderId));
-            uploadedFile = withRetry(() -> {
-                Drive.Files.Create request = driveService.files().create(fileMetadata, mediaContent)
-                        .setFields("id, name, modifiedTime, size");
-                request.getMediaHttpUploader().setProgressListener(uploader -> {
-                    switch (uploader.getUploadState()) {
-                        case MEDIA_IN_PROGRESS -> {
-                            int percent = (int) (uploader.getProgress() * 100);
-                            CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
-                        }
-                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
-                        default -> {}
-                    }
-                });
-                return request.execute();
-            }, 3);
-            SimpleSync.LOGGER.info("[SimpleSync] Uploaded new file: {} (ID: {})", fileName, uploadedFile.getId());
+
+        Optional<String> location = initResponse.headers().firstValue("Location");
+        if (location.isEmpty()) {
+            throw new IOException("Google Drive response did not contain Location header for resumable upload.");
         }
-        if (uploadedFile != null && uploadedFile.getId() != null) {
-            fileIdCache.put(fileName, uploadedFile.getId());
+        String sessionUrl = location.get();
+
+        HttpResponse<String> putResponse;
+        try {
+            putResponse = uploadPut(sessionUrl, zipFile, worldName, fileSize);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Upload PUT interrupted", e);
         }
+
+        if (putResponse.statusCode() != 200 && putResponse.statusCode() != 201) {
+            throw new IOException("Resumable upload PUT failed: HTTP " + putResponse.statusCode() + " - " + putResponse.body());
+        }
+
+        JsonObject uploadedFile = JsonParser.parseString(putResponse.body()).getAsJsonObject();
+        String fileId = uploadedFile.get("id").getAsString();
+        fileIdCache.put(fileName, fileId);
+
+        // Delete obsolete other compression formats of this world
         try {
             String oldOppositeName = worldName + (isZip ? ".tar.zst" : ".zip");
             String oldOppositeId = findFileId(oldOppositeName);
-            if (oldOppositeId != null && !oldOppositeId.equals((uploadedFile != null) ? uploadedFile.getId() : existingFileId)) {
-                withRetry(() -> {
-                    driveService.files().delete(oldOppositeId).execute();
-                    return null;
-                }, 3);
+            if (oldOppositeId != null && !oldOppositeId.equals(fileId)) {
+                deleteFileById(accessToken, oldOppositeId);
                 fileIdCache.remove(oldOppositeName);
                 SimpleSync.LOGGER.info("[SimpleSync] Deleted obsolete {} from Google Drive after uploading {}", oldOppositeName, fileName);
             }
         } catch (Exception e) {
             SimpleSync.LOGGER.warn("[SimpleSync] Could not clean up obsolete archive file from Google Drive: {}", e.getMessage());
         }
-        long mtime = (uploadedFile != null && uploadedFile.getModifiedTime() != null) ? uploadedFile.getModifiedTime().getValue() : System.currentTimeMillis();
-        long size = (uploadedFile != null && uploadedFile.getSize() != null) ? uploadedFile.getSize() : 0;
-        String id = (uploadedFile != null) ? uploadedFile.getId() : existingFileId;
-        return new WorldMetadata(worldName, mtime, size, id);
+
+        long mtime = uploadedFile.has("modifiedTime")
+                ? java.time.Instant.parse(uploadedFile.get("modifiedTime").getAsString()).toEpochMilli()
+                : System.currentTimeMillis();
+        long size = uploadedFile.has("size") ? uploadedFile.get("size").getAsLong() : fileSize;
+
+        return new WorldMetadata(worldName, mtime, size, fileId);
+    }
+
+    private HttpResponse<String> uploadPut(String sessionUrl, Path file, String worldName, long fileSize) throws IOException, InterruptedException {
+        java.util.function.Supplier<InputStream> supplier = () -> {
+            try {
+                InputStream fis = Files.newInputStream(file);
+                return new ProgressInputStream(fis, fileSize, worldName, true);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(sessionUrl))
+                .PUT(HttpRequest.BodyPublishers.ofInputStream(supplier))
+                .header("Content-Length", String.valueOf(fileSize))
+                .timeout(Duration.ofMinutes(15))
+                .build();
+
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     @Override
     public void download(String worldName, Path outputArchive) throws IOException {
+        int maxAttempts = 3;
+        IOException lastError = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                downloadOnce(worldName, outputArchive);
+                return;
+            } catch (IOException e) {
+                lastError = e;
+                SimpleSync.LOGGER.warn("[SimpleSync] Download attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt < maxAttempts) {
+                    try {
+                        long baseDelay = 1000L * (1L << (attempt - 1));
+                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+                        Thread.sleep(Math.max(100L, baseDelay + jitter));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Download interrupted during retry delay", ie);
+                    }
+                }
+            }
+        }
+        throw lastError != null ? lastError : new IOException("Download failed after retries");
+    }
+
+    private void downloadOnce(String worldName, Path outputArchive) throws IOException {
         validateWorldName(worldName);
-        ensureAuthenticated();
 
         WorldMetadata meta = getWorldMetadata(worldName);
         if (meta == null || meta.cloudFileId() == null) {
@@ -231,6 +293,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         final String targetFileId = meta.cloudFileId();
+        final long fileSize = meta.sizeBytes();
         SimpleSync.LOGGER.info("[SimpleSync] Downloading world '{}' (ID: {}) from Google Drive...", worldName, targetFileId);
 
         Files.createDirectories(outputArchive.getParent());
@@ -238,57 +301,78 @@ public class GoogleDriveProvider implements CloudProvider {
             throw new IOException("Refusing to write download through symbolic link: " + outputArchive);
         }
 
-        withRetry(() -> {
-            Files.deleteIfExists(outputArchive);
-            try (OutputStream outputStream = Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-                Drive.Files.Get getRequest = driveService.files().get(targetFileId);
-                getRequest.getMediaHttpDownloader().setProgressListener(downloader -> {
-                    switch (downloader.getDownloadState()) {
-                        case MEDIA_IN_PROGRESS -> {
-                            int percent = (int) (downloader.getProgress() * 100);
-                            CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (" + percent + "%)");
-                        }
-                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.DOWNLOADING, worldName + " (100%)");
-                        case NOT_STARTED -> {}
-                    }
-                });
-                getRequest.executeMediaAndDownloadTo(outputStream);
+        Files.deleteIfExists(outputArchive);
+
+        String accessToken = ensureValidAccessToken();
+        HttpRequest request = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + targetFileId + "?alt=media"))
+                .GET()
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(Duration.ofMinutes(15))
+                .build();
+
+        try {
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() != 200) {
+                throw new IOException("Download failed: HTTP " + response.statusCode());
             }
-            return null;
-        }, 3);
+            try (InputStream is = new ProgressInputStream(response.body(), fileSize, worldName, false);
+                 OutputStream os = Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = is.read(buffer)) > 0) {
+                    os.write(buffer, 0, len);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
+            throw new IOException("Download interrupted", e);
+        } catch (Exception e) {
+            try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
+            throw new IOException("Download failed: " + e.getMessage(), e);
+        }
 
         SimpleSync.LOGGER.info("[SimpleSync] Download complete: {}", outputArchive);
     }
 
     @Override
     public List<WorldMetadata> listWorlds() throws IOException {
-        ensureAuthenticated();
         ensureSimpleSyncFolder();
 
         List<WorldMetadata> worlds = new ArrayList<>();
         fileIdCache.clear();
 
-        String query = String.format("'%s' in parents and trashed=false",
-                simpleSyncFolderId);
-
+        String query = String.format("'%s' in parents and trashed=false", simpleSyncFolderId);
         java.util.Set<String> seenWorldNames = new java.util.HashSet<>();
         String pageToken = null;
-        do {
-            final String currentPageToken = pageToken;
-            FileList result = withRetry(() -> driveService.files().list()
-                    .setQ(query)
-                    .setFields("nextPageToken, files(id, name, modifiedTime, size)")
-                    .setPageSize(1000)
-                    .setPageToken(currentPageToken)
-                    .setOrderBy("modifiedTime desc")
-                    .execute(), 3);
+        String accessToken = ensureValidAccessToken();
 
-            if (result == null || result.getFiles() == null) {
+        do {
+            String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query)
+                    + "&fields=nextPageToken,files(id,name,modifiedTime,size)&pageSize=1000"
+                    + "&orderBy=modifiedTime%20desc"
+                    + (pageToken != null ? "&pageToken=" + enc(pageToken) : "");
+
+            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
+                    .GET()
+                    .header("Authorization", "Bearer " + accessToken)
+                    .timeout(Duration.ofSeconds(30));
+
+            HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+            if (response.statusCode() != 200) {
+                throw new IOException("Failed to list files: HTTP " + response.statusCode() + " - " + response.body());
+            }
+
+            JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+            JsonArray files = body.getAsJsonArray("files");
+
+            if (files == null || files.size() == 0) {
                 break;
             }
 
-            for (File file : result.getFiles()) {
-                String fileName = file.getName();
+            for (int i = 0; i < files.size(); i++) {
+                JsonObject file = files.get(i).getAsJsonObject();
+                String fileName = file.has("name") ? file.get("name").getAsString() : null;
                 if (fileName == null || (!fileName.endsWith(".tar.zst") && !fileName.endsWith(".zip"))) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unexpected name: {}", fileName);
                     continue;
@@ -300,25 +384,30 @@ public class GoogleDriveProvider implements CloudProvider {
                     SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unsafe world name: {}", fileName);
                     continue;
                 }
-                if (file.getId() != null) {
-                    fileIdCache.put(fileName, file.getId());
+                
+                String fileId = file.has("id") ? file.get("id").getAsString() : null;
+                if (fileId != null) {
+                    fileIdCache.put(fileName, fileId);
                 }
                 if (seenWorldNames.contains(worldName)) {
                     continue; // Skip older duplicates or alternate formats of the same world
                 }
                 seenWorldNames.add(worldName);
 
-                long modifiedTime = (file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis();
+                long modifiedTime = file.has("modifiedTime")
+                        ? java.time.Instant.parse(file.get("modifiedTime").getAsString()).toEpochMilli()
+                        : System.currentTimeMillis();
+                long size = file.has("size") ? file.get("size").getAsLong() : 0L;
 
                 worlds.add(new WorldMetadata(
                         worldName,
                         modifiedTime,
-                        file.getSize() != null ? file.getSize() : 0,
-                        file.getId()
+                        size,
+                        fileId
                 ));
             }
 
-            pageToken = result.getNextPageToken();
+            pageToken = body.has("nextPageToken") ? body.get("nextPageToken").getAsString() : null;
         } while (pageToken != null);
 
         return worlds;
@@ -327,7 +416,6 @@ public class GoogleDriveProvider implements CloudProvider {
     @Override
     public WorldMetadata getWorldMetadata(String worldName) throws IOException {
         validateWorldName(worldName);
-        ensureAuthenticated();
 
         String fileIdTarZst = findFileId(worldName + ".tar.zst");
         String fileIdZip = findFileId(worldName + ".zip");
@@ -336,52 +424,63 @@ public class GoogleDriveProvider implements CloudProvider {
             return null;
         }
 
-        String targetFileId;
         if (fileIdTarZst != null && fileIdZip != null) {
-            File fileTarZst = withRetry(() -> driveService.files().get(fileIdTarZst)
-                    .setFields("id, name, modifiedTime, size").execute(), 3);
-            File fileZip = withRetry(() -> driveService.files().get(fileIdZip)
-                    .setFields("id, name, modifiedTime, size").execute(), 3);
-            long timeTarZst = (fileTarZst != null && fileTarZst.getModifiedTime() != null) ? fileTarZst.getModifiedTime().getValue() : System.currentTimeMillis();
-            long timeZip = (fileZip != null && fileZip.getModifiedTime() != null) ? fileZip.getModifiedTime().getValue() : System.currentTimeMillis();
-            if (timeZip > timeTarZst) {
-                fileIdCache.put(worldName + ".zip", fileZip.getId());
-                fileIdCache.remove(worldName + ".tar.zst");
-                return new WorldMetadata(worldName, timeZip, fileZip.getSize() != null ? fileZip.getSize() : 0, fileZip.getId());
+            WorldMetadata metaTarZst = getFileMetadataById(fileIdTarZst, worldName);
+            WorldMetadata metaZip = getFileMetadataById(fileIdZip, worldName);
+            
+            if (metaZip != null && metaTarZst != null) {
+                if (metaZip.lastModified() > metaTarZst.lastModified()) {
+                    fileIdCache.put(worldName + ".zip", fileIdZip);
+                    fileIdCache.remove(worldName + ".tar.zst");
+                    return metaZip;
+                } else {
+                    fileIdCache.put(worldName + ".tar.zst", fileIdTarZst);
+                    fileIdCache.remove(worldName + ".zip");
+                    return metaTarZst;
+                }
+            } else if (metaZip != null) {
+                return metaZip;
             } else {
-                fileIdCache.put(worldName + ".tar.zst", fileTarZst.getId());
-                fileIdCache.remove(worldName + ".zip");
-                return new WorldMetadata(worldName, timeTarZst, fileTarZst.getSize() != null ? fileTarZst.getSize() : 0, fileTarZst.getId());
+                return metaTarZst;
             }
         } else {
-            targetFileId = (fileIdTarZst != null) ? fileIdTarZst : fileIdZip;
+            String targetFileId = (fileIdTarZst != null) ? fileIdTarZst : fileIdZip;
+            return getFileMetadataById(targetFileId, worldName);
         }
+    }
 
-        final String finalFileId = targetFileId;
-        File file = withRetry(() -> driveService.files().get(finalFileId)
-                .setFields("id, name, modifiedTime, size")
-                .execute(), 3);
-
-        return new WorldMetadata(
-                worldName,
-                (file != null && file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis(),
-                file != null && file.getSize() != null ? file.getSize() : 0,
-                file != null ? file.getId() : null
-        );
+    private WorldMetadata getFileMetadataById(String fileId, String worldName) throws IOException {
+        String accessToken = ensureValidAccessToken();
+        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=id,name,modifiedTime,size"))
+                .GET()
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(Duration.ofSeconds(30));
+        
+        HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+        if (response.statusCode() == 200) {
+            JsonObject file = JsonParser.parseString(response.body()).getAsJsonObject();
+            long modifiedTime = file.has("modifiedTime")
+                    ? java.time.Instant.parse(file.get("modifiedTime").getAsString()).toEpochMilli()
+                    : System.currentTimeMillis();
+            long size = file.has("size") ? file.get("size").getAsLong() : 0L;
+            return new WorldMetadata(worldName, modifiedTime, size, fileId);
+        } else if (response.statusCode() == 404) {
+            return null;
+        } else {
+            throw new IOException("Failed to get file metadata: HTTP " + response.statusCode() + " - " + response.body());
+        }
     }
 
     @Override
     public void delete(String worldName) throws IOException {
         validateWorldName(worldName);
-        ensureAuthenticated();
-
+        
+        String accessToken = ensureValidAccessToken();
+        
         String fileNameTarZst = worldName + ".tar.zst";
         String fileIdTarZst = findFileId(fileNameTarZst);
         if (fileIdTarZst != null) {
-            withRetry(() -> {
-                driveService.files().delete(fileIdTarZst).execute();
-                return null;
-            }, 3);
+            deleteFileById(accessToken, fileIdTarZst);
             fileIdCache.remove(fileNameTarZst);
             SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameTarZst);
         }
@@ -389,38 +488,51 @@ public class GoogleDriveProvider implements CloudProvider {
         String fileNameZip = worldName + ".zip";
         String fileIdZip = findFileId(fileNameZip);
         if (fileIdZip != null) {
-            withRetry(() -> {
-                driveService.files().delete(fileIdZip).execute();
-                return null;
-            }, 3);
+            deleteFileById(accessToken, fileIdZip);
             fileIdCache.remove(fileNameZip);
             SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameZip);
         }
     }
 
+    private void deleteFileById(String accessToken, String fileId) throws IOException {
+        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + fileId))
+                .DELETE()
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(Duration.ofSeconds(30));
+        HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+        if (response.statusCode() != 204 && response.statusCode() != 404) {
+            throw new IOException("Failed to delete file " + fileId + ": HTTP " + response.statusCode() + " - " + response.body());
+        }
+    }
+
     @Override
     public synchronized void disconnect() throws IOException {
-        driveService = null;
         simpleSyncFolderId = null;
         fileIdCache.clear();
         if (Files.isSymbolicLink(credentialsDir)) {
             throw new IOException("Refusing to clear symlinked credentials directory: " + credentialsDir);
         }
-        if (Files.isDirectory(credentialsDir)) {
-            try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(credentialsDir)) {
-                for (Path entry : stream) {
-                    if (Files.isRegularFile(entry)) {
-                        Files.delete(entry);
-                    }
-                }
-            }
-        }
+        TokenStore.clear();
         SimpleSync.LOGGER.info("[SimpleSync] Disconnected from Google Drive and cleared stored credentials");
     }
 
     // ─── Private Helpers ────────────────────────────────────────────────────
 
-    private GoogleClientSecrets loadClientSecrets() throws IOException {
+    public static class ClientSecrets {
+        public Details installed;
+        public Details web;
+
+        public static class Details {
+            public String client_id;
+            public String client_secret;
+        }
+
+        public Details getDetails() {
+            return installed != null ? installed : web;
+        }
+    }
+
+    private ClientSecrets loadClientSecrets() throws IOException {
         Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
         if (!Files.exists(clientSecretFile)) {
             SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
@@ -428,113 +540,64 @@ public class GoogleDriveProvider implements CloudProvider {
             SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
             return null;
         }
-        try (InputStream in = Files.newInputStream(clientSecretFile)) {
-            GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in, StandardCharsets.UTF_8));
-            if (secrets.getInstalled() == null && secrets.getWeb() == null) {
+        try {
+            String json = Files.readString(clientSecretFile);
+            ClientSecrets secrets = new Gson().fromJson(json, ClientSecrets.class);
+            if (secrets == null || secrets.getDetails() == null) {
                 throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
             }
             return secrets;
-        }
-    }
-
-    private GoogleAuthorizationCodeFlow createFlow(NetHttpTransport transport, GoogleClientSecrets secrets) throws IOException {
-        if (secrets == null) {
-            return null;
-        }
-        if (Files.isSymbolicLink(credentialsDir)) {
-            throw new IOException("Refusing to use symlinked credentials directory: " + credentialsDir);
-        }
-        Files.createDirectories(credentialsDir);
-        return new GoogleAuthorizationCodeFlow.Builder(transport, JSON_FACTORY, secrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(credentialsDir.toFile()))
-                .setAccessType("offline")
-                .build();
-    }
-
-    private synchronized void initializeDriveService() throws IOException, GeneralSecurityException {
-        final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
-        GoogleClientSecrets secrets = loadClientSecrets();
-        if (secrets == null) {
-            throw new IOException("client_secret.json is missing! Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
-        }
-
-        GoogleAuthorizationCodeFlow flow = createFlow(transport, secrets);
-        if (flow == null) {
-            return;
-        }
-
-        GoogleClientSecrets.Details details = secrets.getInstalled() != null ? secrets.getInstalled() : secrets.getWeb();
-        if (details == null) {
-            throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
-        }
-
-        Credential credential;
-        try {
-            credential = new DeviceCodeAuthenticator().authenticate(
-                    flow,
-                    details.getClientId(),
-                    details.getClientSecret(),
-                    SCOPES.get(0),
-                    CloudSyncManager.getInstance().getAuthPromptCallback()
-            );
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Authentication flow was interrupted", e);
-        }
-
-        driveService = new Drive.Builder(transport, JSON_FACTORY, credential)
-                .setApplicationName(APPLICATION_NAME)
-                .build();
-    }
-
-    private synchronized boolean initializeDriveServiceOffline() {
-        try {
-            final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
-            GoogleAuthorizationCodeFlow flow = createFlow(transport, loadClientSecrets());
-            if (flow == null) {
-                return false;
-            }
-
-            Credential cred = flow.loadCredential("user");
-            if (cred != null && (cred.getRefreshToken() != null || cred.getAccessToken() != null)) {
-                Long expiresIn = cred.getExpiresInSeconds();
-                if (expiresIn != null && expiresIn <= 60) {
-                    if (cred.getRefreshToken() == null) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Access token has expired and no refresh token is available.");
-                        return false;
-                    }
-                    try {
-                        if (!cred.refreshToken()) {
-                            SimpleSync.LOGGER.warn("[SimpleSync] Failed to refresh expired access token.");
-                            return false;
-                        }
-                    } catch (Exception e) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Exception refreshing access token offline: {}", e.getMessage());
-                        return false;
-                    }
-                }
-                driveService = new Drive.Builder(transport, JSON_FACTORY, cred)
-                        .setApplicationName(APPLICATION_NAME)
-                        .build();
-                return true;
-            }
         } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Exception while checking stored offline credentials", e);
+            throw new IOException("Failed to load client_secret.json: " + e.getMessage(), e);
         }
-        return false;
     }
 
-    private void ensureAuthenticated() throws IOException {
-        if (driveService == null) {
+    private synchronized String ensureValidAccessToken() throws IOException {
+        TokenStore.TokenData tokenData = TokenStore.load();
+        if (tokenData == null) {
+            throw new IOException("Google Drive is not authenticated. Please authenticate.");
+        }
+        
+        // Refresh token if expired or expiring within 5 minutes (300 seconds)
+        if (System.currentTimeMillis() >= tokenData.expiresAtMs - 300000) {
+            if (tokenData.refreshToken == null || tokenData.refreshToken.isEmpty()) {
+                throw new IOException("Access token expired and no refresh token is available. Please re-authenticate.");
+            }
+            SimpleSync.LOGGER.info("[SimpleSync] Access token is expired or close to expiring. Refreshing...");
+            
+            ClientSecrets secrets = loadClientSecrets();
+            if (secrets == null) {
+                throw new IOException("client_secret.json is missing. Cannot refresh token.");
+            }
+            ClientSecrets.Details details = secrets.getDetails();
+            
+            String refreshBody = "client_id=" + enc(details.client_id)
+                    + (details.client_secret != null && !details.client_secret.isEmpty() ? "&client_secret=" + enc(details.client_secret) : "")
+                    + "&refresh_token=" + enc(tokenData.refreshToken)
+                    + "&grant_type=refresh_token";
+            
             try {
-                initializeDriveService();
-            } catch (GeneralSecurityException e) {
-                throw new IOException("Failed to authenticate with Google Drive", e);
+                HttpResponse<String> response = rawPostWithRetry("https://oauth2.googleapis.com/token", refreshBody);
+                if (response.statusCode() == 200) {
+                    JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+                    String newAccessToken = body.get("access_token").getAsString();
+                    String newRefreshToken = body.has("refresh_token") ? body.get("refresh_token").getAsString() : tokenData.refreshToken;
+                    long expiresInSeconds = body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L;
+                    long newExpiresAtMs = System.currentTimeMillis() + (expiresInSeconds * 1000L);
+                    
+                    tokenData = new TokenStore.TokenData(newAccessToken, newRefreshToken, newExpiresAtMs);
+                    TokenStore.save(tokenData);
+                    SimpleSync.LOGGER.info("[SimpleSync] Access token successfully refreshed.");
+                } else {
+                    throw new IOException("Google token refresh returned status " + response.statusCode() + ": " + response.body());
+                }
+            } catch (Exception e) {
+                SimpleSync.LOGGER.error("[SimpleSync] Failed to refresh access token", e);
+                throw new IOException("Failed to refresh access token: " + e.getMessage(), e);
             }
         }
-        if (driveService == null) {
-            throw new IOException("Google Drive is not authenticated. Please set up client_secret.json.");
-        }
+        
+        return tokenData.accessToken;
     }
 
     private synchronized void ensureSimpleSyncFolder() throws IOException {
@@ -544,13 +607,23 @@ public class GoogleDriveProvider implements CloudProvider {
 
         SyncConfig config = SyncConfig.load();
         String savedFolderId = config.getSimpleSyncFolderId();
+        String accessToken = ensureValidAccessToken();
+
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
             if (isSafeDriveFileId(savedFolderId)) {
                 try {
-                    File folder = withRetry(() -> driveService.files().get(savedFolderId).setFields("id, trashed").execute(), 1);
-                    if (folder != null && (folder.getTrashed() == null || !folder.getTrashed())) {
-                        simpleSyncFolderId = savedFolderId;
-                        return;
+                    HttpRequest checkRequest = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + savedFolderId + "?fields=id,trashed"))
+                            .GET()
+                            .header("Authorization", "Bearer " + accessToken)
+                            .timeout(Duration.ofSeconds(15))
+                            .build();
+                    HttpResponse<String> checkResp = httpClient.send(checkRequest, HttpResponse.BodyHandlers.ofString());
+                    if (checkResp.statusCode() == 200) {
+                        JsonObject folder = JsonParser.parseString(checkResp.body()).getAsJsonObject();
+                        if (folder != null && (!folder.has("trashed") || !folder.get("trashed").getAsBoolean())) {
+                            simpleSyncFolderId = savedFolderId;
+                            return;
+                        }
                     }
                     SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was trashed or not found.", savedFolderId);
                 } catch (Exception e) {
@@ -563,36 +636,59 @@ public class GoogleDriveProvider implements CloudProvider {
             config.save();
         }
 
-        FileList result = withRetry(() -> driveService.files().list()
-                .setQ("name='" + escapeQueryString(SIMPLESYNC_FOLDER_NAME) + "' and mimeType='application/vnd.google-apps.folder' and trashed=false")
-                .setFields("files(id)")
-                .setOrderBy("createdTime")
-                .execute(), 3);
-
-        if (result != null && result.getFiles() != null && !result.getFiles().isEmpty()) {
-            simpleSyncFolderId = result.getFiles().get(0).getId();
-            if (!isSafeDriveFileId(simpleSyncFolderId)) {
-                throw new IOException("Google Drive returned an invalid SimpleSync folder id");
+        // Search for existing folder
+        String query = "name='" + escapeQueryString(SIMPLESYNC_FOLDER_NAME) + "' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+        String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=createdTime";
+        
+        HttpRequest searchRequest = HttpRequest.newBuilder(URI.create(searchUrl))
+                .GET()
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(Duration.ofSeconds(30))
+                .build();
+        
+        try {
+            HttpResponse<String> searchResp = httpClient.send(searchRequest, HttpResponse.BodyHandlers.ofString());
+            if (searchResp.statusCode() == 200) {
+                JsonObject body = JsonParser.parseString(searchResp.body()).getAsJsonObject();
+                JsonArray files = body.getAsJsonArray("files");
+                if (files != null && files.size() > 0) {
+                    simpleSyncFolderId = files.get(0).getAsJsonObject().get("id").getAsString();
+                    SimpleSync.LOGGER.info("[SimpleSync] Found SimpleSync folder: {}", simpleSyncFolderId);
+                    config.setSimpleSyncFolderId(simpleSyncFolderId);
+                    config.save();
+                    return;
+                }
             }
-            SimpleSync.LOGGER.info("[SimpleSync] Found SimpleSync folder: {}", simpleSyncFolderId);
-        } else {
-            File folderMetadata = new File();
-            folderMetadata.setName(SIMPLESYNC_FOLDER_NAME);
-            folderMetadata.setMimeType("application/vnd.google-apps.folder");
-
-            File folder = withRetry(() -> driveService.files().create(folderMetadata)
-                    .setFields("id")
-                    .execute(), 3);
-
-            simpleSyncFolderId = folder.getId();
-            if (!isSafeDriveFileId(simpleSyncFolderId)) {
-                throw new IOException("Google Drive returned an invalid SimpleSync folder id");
-            }
-            SimpleSync.LOGGER.info("[SimpleSync] Created SimpleSync folder: {}", simpleSyncFolderId);
+        } catch (Exception e) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Failed to search for SimpleSync folder: {}", e.getMessage());
         }
 
-        config.setSimpleSyncFolderId(simpleSyncFolderId);
-        config.save();
+        // Create folder
+        JsonObject folderMeta = new JsonObject();
+        folderMeta.addProperty("name", SIMPLESYNC_FOLDER_NAME);
+        folderMeta.addProperty("mimeType", "application/vnd.google-apps.folder");
+
+        HttpRequest createRequest = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files?fields=id"))
+                .POST(HttpRequest.BodyPublishers.ofString(folderMeta.toString()))
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", "application/json; charset=UTF-8")
+                .timeout(Duration.ofSeconds(30))
+                .build();
+
+        try {
+            HttpResponse<String> createResp = httpClient.send(createRequest, HttpResponse.BodyHandlers.ofString());
+            if (createResp.statusCode() == 200 || createResp.statusCode() == 201) {
+                JsonObject folder = JsonParser.parseString(createResp.body()).getAsJsonObject();
+                simpleSyncFolderId = folder.get("id").getAsString();
+                SimpleSync.LOGGER.info("[SimpleSync] Created SimpleSync folder: {}", simpleSyncFolderId);
+                config.setSimpleSyncFolderId(simpleSyncFolderId);
+                config.save();
+            } else {
+                throw new IOException("Folder creation failed: HTTP " + createResp.statusCode() + " - " + createResp.body());
+            }
+        } catch (Exception e) {
+            throw new IOException("Failed to create SimpleSync folder: " + e.getMessage(), e);
+        }
     }
 
     private synchronized String findFileId(String fileName) throws IOException {
@@ -601,20 +697,31 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         ensureSimpleSyncFolder();
+        String accessToken = ensureValidAccessToken();
 
         String query = String.format("name='%s' and '%s' in parents and trashed=false",
                 escapeQueryString(fileName), simpleSyncFolderId);
+        String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
-        FileList result = withRetry(() -> driveService.files().list()
-                .setQ(query)
-                .setFields("files(id)")
-                .setOrderBy("modifiedTime desc")
-                .execute(), 3);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .GET()
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(Duration.ofSeconds(30))
+                .build();
 
-        if (result != null && result.getFiles() != null && !result.getFiles().isEmpty()) {
-            String id = result.getFiles().get(0).getId();
-            fileIdCache.put(fileName, id);
-            return id;
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+                JsonArray files = body.getAsJsonArray("files");
+                if (files != null && files.size() > 0) {
+                    String id = files.get(0).getAsJsonObject().get("id").getAsString();
+                    fileIdCache.put(fileName, id);
+                    return id;
+                }
+            }
+        } catch (Exception e) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Failed to find file ID for {}: {}", fileName, e.getMessage());
         }
         return null;
     }
@@ -633,45 +740,129 @@ public class GoogleDriveProvider implements CloudProvider {
         return str != null ? str.replace("\\", "\\\\").replace("'", "\\'") : "";
     }
 
-    private <T> T withRetry(Callable<T> action, int maxAttempts) throws IOException {
+    private HttpResponse<String> sendWithRetry(HttpRequest.Builder requestBuilder, int maxAttempts) throws IOException {
         IOException lastError = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                return action.call();
+                HttpRequest request = requestBuilder.build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                int statusCode = response.statusCode();
+                if (statusCode == 401) {
+                    String newAccessToken = ensureValidAccessToken();
+                    requestBuilder.header("Authorization", "Bearer " + newAccessToken);
+                } else if (statusCode == 404) {
+                    simpleSyncFolderId = null;
+                    return response;
+                } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, response.body());
+                    return response;
+                } else if (statusCode >= 200 && statusCode < 300) {
+                    return response;
+                }
+                lastError = new IOException("Server returned status " + statusCode + ": " + response.body());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Operation interrupted", e);
             } catch (IOException e) {
-                if (e instanceof GoogleJsonResponseException jsonEx) {
-                    int statusCode = jsonEx.getStatusCode();
-                    if (statusCode == 404) {
-                        simpleSyncFolderId = null;
-                    }
-                    if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429) {
-                        SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, e.getMessage());
-                        throw e;
-                    }
-                }
                 lastError = e;
-                SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
-                if (attempt < maxAttempts) {
-                    try {
-                        long baseDelay = 1000L * (1L << (attempt - 1));
-                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                        Thread.sleep(Math.max(100L, baseDelay + jitter));
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Operation interrupted during retry delay", ie);
-                    }
-                }
-            } catch (Exception e) {
-                if (e instanceof InterruptedException ie) {
+            }
+            if (attempt < maxAttempts) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}. Retrying...", attempt, maxAttempts, lastError.getMessage());
+                try {
+                    long baseDelay = 1000L * (1L << (attempt - 1));
+                    long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+                    Thread.sleep(Math.max(100L, baseDelay + jitter));
+                } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    throw new IOException("Operation interrupted", ie);
+                    throw new IOException("Operation interrupted during retry delay", ie);
                 }
-                throw new IOException(e);
             }
         }
         throw lastError != null ? lastError : new IOException("Operation failed after retries");
+    }
+
+    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException, InterruptedException {
+        int attempt = 0;
+        int maxAttempts = 3;
+        IOException lastEx = null;
+        while (attempt < maxAttempts) {
+            attempt++;
+            try {
+                HttpResponse<String> resp = rawPost(url, body);
+                if (resp.statusCode() >= 500) {
+                    lastEx = new IOException("Google server returned HTTP " + resp.statusCode());
+                } else {
+                    return resp;
+                }
+            } catch (IOException e) {
+                lastEx = e;
+            }
+            if (attempt < maxAttempts) {
+                long delay = 1000L * (1L << (attempt - 1));
+                SimpleSync.LOGGER.warn("[SimpleSync] Transient post error (attempt {}/{}), retrying in {}ms...", attempt, maxAttempts, delay);
+                Thread.sleep(delay);
+            }
+        }
+        throw lastEx;
+    }
+
+    private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .timeout(Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String enc(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8);
+    }
+
+    // ─── Progress Tracking Stream ────────────────────────────────────────────
+
+    private static class ProgressInputStream extends FilterInputStream {
+        private final long totalBytes;
+        private final String worldName;
+        private final boolean upload;
+        private long bytesRead = 0;
+        private int lastPercent = -1;
+
+        protected ProgressInputStream(InputStream in, long totalBytes, String worldName, boolean upload) {
+            super(in);
+            this.totalBytes = totalBytes;
+            this.worldName = worldName;
+            this.upload = upload;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b != -1) {
+                updateProgress(1);
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            int read = super.read(b, off, len);
+            if (read != -1) {
+                updateProgress(read);
+            }
+            return read;
+        }
+
+        private void updateProgress(long read) {
+            bytesRead += read;
+            if (totalBytes > 0) {
+                int percent = (int) ((bytesRead * 100) / totalBytes);
+                if (percent != lastPercent) {
+                    lastPercent = percent;
+                    SyncStatus status = upload ? SyncStatus.UPLOADING : SyncStatus.DOWNLOADING;
+                    CloudSyncManager.getInstance().setStatus(status, worldName + " (" + percent + "%)");
+                }
+            }
+        }
     }
 }

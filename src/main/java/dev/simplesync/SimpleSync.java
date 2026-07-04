@@ -9,7 +9,6 @@ import dev.simplesync.config.SyncConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.Desktop;
 import java.net.URI;
 import java.util.Locale;
 
@@ -54,37 +53,18 @@ public class SimpleSync implements ModInitializer {
     }
 
     public static boolean openUrl(String url) {
-        URI uri;
         try {
-            uri = URI.create(url);
-        } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Refused to open malformed URL: {}", url);
-            return false;
-        }
-
-        if (!isAllowedGoogleUrl(uri)) {
-            LOGGER.warn("[SimpleSync] Refused to open unexpected Google URL: {}", url);
-            return false;
-        }
-
-        try {
-            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                Desktop.getDesktop().browse(uri);
-            } else {
-                // Fallback to Minecraft's built-in utility
-                net.minecraft.util.Util.getPlatform().openUri(uri);
+            URI uri = URI.create(url);
+            if (!isAllowedGoogleUrl(uri)) {
+                LOGGER.warn("[SimpleSync] Refused to open unexpected Google URL: {}", url);
+                return false;
             }
+            net.minecraft.util.Util.getPlatform().openUri(uri);
             LOGGER.info("[SimpleSync] Opened URL in browser: {}", url);
             return true;
         } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Failed to open URL via Desktop API, falling back to Minecraft Util API: {}", e.getMessage());
-            try {
-                net.minecraft.util.Util.getPlatform().openUri(uri);
-                return true;
-            } catch (Exception ex) {
-                LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, ex);
-                return false;
-            }
+            LOGGER.error("[SimpleSync] Failed to open URL completely: {}", url, e);
+            return false;
         }
     }
 

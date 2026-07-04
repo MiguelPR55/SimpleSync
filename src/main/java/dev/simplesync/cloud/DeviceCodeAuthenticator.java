@@ -1,8 +1,5 @@
 package dev.simplesync.cloud;
 
-import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.auth.oauth2.TokenResponse;
-import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.simplesync.SimpleSync;
@@ -18,8 +15,8 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Implements the Google OAuth 2.0 Device Authorization Grant (RFC 8628).
- * Feeds a TokenResponse into GoogleAuthorizationCodeFlow to reuse existing token persistence and refresh logic.
+ * Implements the Google OAuth 2.0 Device Authorization Grant (RFC 8628) using Java's native HttpClient.
+ * Stores retrieved tokens into TokenStore.
  */
 public class DeviceCodeAuthenticator {
 
@@ -34,16 +31,14 @@ public class DeviceCodeAuthenticator {
      * Executes the device authorization grant flow.
      * Must be called from a background worker thread (never on the render thread).
      *
-     * @param flow         The GoogleAuthorizationCodeFlow to store the credential in
      * @param clientId     The OAuth Client ID
      * @param clientSecret The OAuth Client Secret
-     * @param scope        The requested scope (e.g., DriveScopes.DRIVE_FILE)
+     * @param scope        The requested scope (e.g., "https://www.googleapis.com/auth/drive.file")
      * @param callback     Optional callback to display the user code and verification URL in the UI
      * @throws IOException          if authentication fails or is cancelled
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public Credential authenticate(
-            GoogleAuthorizationCodeFlow flow,
+    public void authenticate(
             String clientId,
             String clientSecret,
             String scope,
@@ -115,13 +110,13 @@ public class DeviceCodeAuthenticator {
 
             if (raw.statusCode() == 200 && body.has("access_token")) {
                 SimpleSync.LOGGER.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
-                TokenResponse tokenResponse = new TokenResponse();
-                tokenResponse.setAccessToken(body.get("access_token").getAsString());
-                tokenResponse.setRefreshToken(body.has("refresh_token") ? body.get("refresh_token").getAsString() : null);
-                tokenResponse.setExpiresInSeconds(body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L);
-                tokenResponse.setTokenType("Bearer");
-                tokenResponse.setScope(scope);
-                return flow.createAndStoreCredential(tokenResponse, "user");
+                String accessToken = body.get("access_token").getAsString();
+                String refreshToken = body.has("refresh_token") ? body.get("refresh_token").getAsString() : null;
+                long expiresInSeconds = body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L;
+                long expiresAtMs = System.currentTimeMillis() + (expiresInSeconds * 1000L);
+                
+                TokenStore.save(new TokenStore.TokenData(accessToken, refreshToken, expiresAtMs));
+                return;
             }
 
             String error = body.has("error") ? body.get("error").getAsString() : "unknown_error";

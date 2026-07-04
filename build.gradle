@@ -53,16 +53,6 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    // Google Drive API
-    implementation 'com.google.api-client:google-api-client:2.7.2'
-    shadowBundle 'com.google.api-client:google-api-client:2.7.2'
-
-    implementation 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
-    shadowBundle 'com.google.apis:google-api-services-drive:v3-rev20240509-2.0.0'
-
-    implementation 'com.google.http-client:google-http-client-gson:1.45.3'
-    shadowBundle 'com.google.http-client:google-http-client-gson:1.45.3'
-
     implementation 'org.apache.commons:commons-compress:1.28.0'
     shadowBundle 'org.apache.commons:commons-compress:1.28.0'
 
@@ -84,9 +74,6 @@ shadowJar {
     configurations = [project.configurations.shadowBundle]
     archiveClassifier = 'shadow-dev'
 
-    relocate 'com.google', 'dev.simplesync.shadow.com.google'
-    relocate 'io.grpc', 'dev.simplesync.shadow.io.grpc'
-    relocate 'org.apache.http', 'dev.simplesync.shadow.org.apache.http'
     relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
 
     // Exclude duplicate META-INF files
