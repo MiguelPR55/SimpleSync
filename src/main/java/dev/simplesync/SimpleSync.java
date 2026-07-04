@@ -22,6 +22,7 @@ public class SimpleSync implements ModInitializer {
     @Override
     public void onInitialize() {
         LOGGER.info("[SimpleSync] Initializing...");
+        preloadClasses();
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             if (isIntegratedServer(server)) {
@@ -42,6 +43,28 @@ public class SimpleSync implements ModInitializer {
                 }
             }
         });
+    }
+
+    private static void preloadClasses() {
+        String[] classes = {
+            "dev.simplesync.cloud.TokenStore",
+            "dev.simplesync.cloud.TokenStore$TokenData",
+            "dev.simplesync.cloud.DeviceCodeAuthenticator",
+            "dev.simplesync.cloud.GoogleDriveProvider",
+            "dev.simplesync.cloud.CloudSyncManager",
+            "dev.simplesync.util.RetryUtil",
+            "dev.simplesync.sync.WorldSyncTask",
+            "dev.simplesync.sync.WorldMetadata",
+            "dev.simplesync.sync.StatusSnapshot",
+            "dev.simplesync.sync.SyncStatus"
+        };
+        for (String cls : classes) {
+            try {
+                Class.forName(cls, true, SimpleSync.class.getClassLoader());
+            } catch (ClassNotFoundException e) {
+                LOGGER.warn("[SimpleSync] Preloading failed for class: {}", cls);
+            }
+        }
     }
 
     private static boolean isIntegratedServer(MinecraftServer server) {

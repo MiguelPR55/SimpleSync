@@ -12,6 +12,7 @@ public class SimpleSyncClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         SimpleSync.LOGGER.info("[SimpleSync] Initializing client...");
+        preloadClientClasses();
         
         // Pass the actual Minecraft runDirectory to CloudSyncManager
         CloudSyncManager.getInstance().setSavesDirectory(
@@ -48,5 +49,21 @@ public class SimpleSyncClient implements ClientModInitializer {
                 ));
             });
         });
+    }
+
+    private static void preloadClientClasses() {
+        String[] classes = {
+            "dev.simplesync.ui.DeviceAuthScreen",
+            "dev.simplesync.ui.SyncConfigScreen",
+            "dev.simplesync.ui.SyncConflictScreen",
+            "dev.simplesync.ui.SyncStatusOverlay"
+        };
+        for (String cls : classes) {
+            try {
+                Class.forName(cls, true, SimpleSyncClient.class.getClassLoader());
+            } catch (ClassNotFoundException e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Preloading failed for client class: {}", cls);
+            }
+        }
     }
 }

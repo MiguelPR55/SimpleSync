@@ -290,7 +290,7 @@ public class SyncConfigScreen extends Screen {
             int step4Width = this.font.width(Component.translatable("simplesync.tutorial.step4"));
             if (event.y() >= (startY + stepGap * 3) - 4 && event.y() <= (startY + stepGap * 3) + 13
                     && event.x() >= centerX - step4Width / 2 && event.x() <= centerX + step4Width / 2) {
-                confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/credentials/consent");
+                confirmAndOpenUrl(this, "https://console.cloud.google.com/auth/audience");
                 return true;
             }
 
@@ -298,7 +298,7 @@ public class SyncConfigScreen extends Screen {
             int step5Width = this.font.width(Component.translatable("simplesync.tutorial.step5"));
             if (event.y() >= (startY + stepGap * 4) - 4 && event.y() <= (startY + stepGap * 4) + 13
                     && event.x() >= centerX - step5Width / 2 && event.x() <= centerX + step5Width / 2) {
-                confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/credentials/consent");
+                confirmAndOpenUrl(this, "https://console.cloud.google.com/auth/audience");
                 return true;
             }
 
