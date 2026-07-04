@@ -96,7 +96,7 @@ public class CloudSyncManager {
         return executor;
     }
 
-    private void ensureAuthenticatedOrThrow(CloudProvider cloud, Runnable onAuthenticated) throws IOException {
+    public void ensureAuthenticatedOrThrow(CloudProvider cloud, Runnable onAuthenticated) throws IOException {
         if (!cloud.isAuthenticated()) {
             setStatus(SyncStatus.AUTHENTICATING, "");
             if (cloud.isAuthenticating()) {
@@ -146,6 +146,10 @@ public class CloudSyncManager {
                             SimpleSync.LOGGER.warn("[SimpleSync] Security violation: path traversal detected for world '{}'", worldName);
                             continue;
                         }
+                        if (config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(worldName)) {
+                            SimpleSync.LOGGER.info("[SimpleSync] Skipping cloud world '{}' because it is marked as ignored/archived locally.", worldName);
+                            continue;
+                        }
 
                         long localTimestamp = config.getLastSyncTimestamp(worldName);
                         long tolerance = localTimestamp > 0 ? 5000L : 0L;
@@ -153,15 +157,14 @@ public class CloudSyncManager {
                         if (cloudWorld.lastModified() > (localTimestamp + tolerance) || !java.nio.file.Files.isDirectory(worldFolder)) {
                             if (!java.nio.file.Files.isDirectory(worldFolder)) {
                                 if (localTimestamp > 0) {
-                                    SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted locally (previous sync timestamp found). Deleting from cloud...", worldName);
-                                    try {
-                                        cloud.delete(worldName);
-                                    } catch (Exception deleteEx) {
-                                        SimpleSync.LOGGER.error("[SimpleSync] Failed to delete remote world '{}'", worldName, deleteEx);
-                                    }
+                                    SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted outside Minecraft (previous sync timestamp found). Adding to ignored/archived list to protect cloud backup...", worldName);
                                     config.lastSyncTimestamps.remove(worldName);
                                     config.lastLocalSizes.remove(worldName);
                                     config.lastLocalMtimes.remove(worldName);
+                                    if (config.ignoredCloudWorlds != null) {
+                                        config.ignoredCloudWorlds.add(worldName);
+                                    }
+                                    config.save();
                                     continue;
                                 }
                             }
@@ -344,6 +347,84 @@ public class CloudSyncManager {
         }, executor);
     }
 
+    /**
+     * Deletes a world from the cloud asynchronously on the executor thread.
+     */
+    public CompletableFuture<Void> deleteWorldFromCloudAsync(String worldName) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                CloudProvider cloud = getProvider();
+                if (cloud == null || !cloud.isAuthenticated()) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Cannot delete remote world '{}': Not authenticated", worldName);
+                    return;
+                }
+                SimpleSync.LOGGER.info("[SimpleSync] Deleting world '{}' from cloud...", worldName);
+                cloud.delete(worldName);
+
+                SyncConfig config = SyncConfig.load();
+                config.lastSyncTimestamps.remove(worldName);
+                config.lastLocalSizes.remove(worldName);
+                config.lastLocalMtimes.remove(worldName);
+                if (config.ignoredCloudWorlds != null) {
+                    config.ignoredCloudWorlds.remove(worldName);
+                }
+                config.save();
+                SimpleSync.LOGGER.info("[SimpleSync] Successfully deleted remote world '{}'", worldName);
+            } catch (Throwable t) {
+                SimpleSync.LOGGER.error("[SimpleSync] Failed to delete remote world: {}", worldName, t);
+            }
+        }, executor);
+    }
+
+    /**
+     * Restores/downloads a specific world from the cloud asynchronously on the executor thread.
+     */
+    public CompletableFuture<Void> restoreWorldFromCloudAsync(String worldName, Runnable onComplete) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+                    throw new IllegalArgumentException("Invalid world name: " + worldName);
+                }
+                CloudProvider cloud = getProvider();
+                ensureAuthenticatedOrThrow(cloud, () -> restoreWorldFromCloudAsync(worldName, onComplete));
+
+                Path savesDir = getSavesDirectory();
+                Path worldFolder = savesDir.resolve(worldName).normalize();
+                if (!worldFolder.startsWith(savesDir.normalize())) {
+                    throw new SecurityException("Path traversal detected: " + worldName);
+                }
+
+                WorldMetadata meta = cloud.getWorldMetadata(worldName);
+                if (meta == null) {
+                    throw new IOException("Remote world not found on Google Drive: " + worldName);
+                }
+
+                setStatus(SyncStatus.DOWNLOADING, worldName);
+                Path tempArchive = Files.createTempFile("simplesync-restore-", ".tmp");
+                try {
+                    cloud.download(worldName, tempArchive);
+                    setStatus(SyncStatus.EXTRACTING, worldName);
+                    WorldSyncTask.extractWorld(tempArchive, worldFolder);
+
+                    SyncConfig config = SyncConfig.load();
+                    updateWorldTracking(config, worldName, worldFolder, meta.lastModified());
+                    config.save();
+
+                    setStatus(SyncStatus.DONE, "");
+                    SimpleSync.LOGGER.info("[SimpleSync] Successfully restored world from cloud: {}", worldName);
+                    if (onComplete != null) {
+                        onComplete.run();
+                    }
+                } finally {
+                    deleteQuietly(tempArchive);
+                }
+            } catch (Throwable t) {
+                SimpleSync.LOGGER.error("[SimpleSync] Failed to restore world: {}", worldName, t);
+                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
+            }
+        }, executor);
+    }
+
     // ─── Status Management ──────────────────────────────────────────────────
 
     public StatusSnapshot getStatusSnapshot() {
@@ -391,6 +472,9 @@ public class CloudSyncManager {
 
     private void updateWorldTracking(SyncConfig config, String worldName, Path worldFolder, long timestamp) {
         config.setLastSyncTimestamp(worldName, timestamp);
+        if (config.ignoredCloudWorlds != null) {
+            config.ignoredCloudWorlds.remove(worldName);
+        }
         try {
             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
             config.setLastLocalSize(worldName, stats.size());

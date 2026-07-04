@@ -49,5 +49,16 @@
   "simplesync.auth.open_browser": "Open Browser",
   "simplesync.auth.copy_code": "Copy Code",
   "simplesync.auth.cancel": "Cancel",
-  "simplesync.auth.expires": "This code expires in %s minutes."
+  "simplesync.auth.expires": "This code expires in %s minutes.",
+  "simplesync.world.delete_from_drive": "Also delete from Google Drive",
+  "simplesync.cloud_worlds.title": "Google Drive Cloud Worlds",
+  "simplesync.cloud_worlds.button": "☁ Cloud Worlds",
+  "simplesync.cloud_worlds.loading": "Loading backups from Google Drive...",
+  "simplesync.cloud_worlds.empty": "No world backups found on Google Drive.",
+  "simplesync.cloud_worlds.restore": "Restore",
+  "simplesync.cloud_worlds.reinstall": "Reinstall",
+  "simplesync.cloud_worlds.delete": "Delete",
+  "simplesync.cloud_worlds.status.installed": "[Installed]",
+  "simplesync.cloud_worlds.status.archived": "[Archived / Uninstalled]",
+  "simplesync.cloud_worlds.status.cloud_only": "[Cloud Only]"
 }

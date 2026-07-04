@@ -6,7 +6,8 @@
   "client": [
     "TitleScreenMixin",
     "ScreenMixin",
-    "WorldListEntryMixin"
+    "WorldListEntryMixin",
+    "SelectWorldScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

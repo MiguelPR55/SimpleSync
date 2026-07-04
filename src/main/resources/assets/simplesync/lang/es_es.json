@@ -49,5 +49,16 @@
   "simplesync.auth.open_browser": "Abrir Navegador",
   "simplesync.auth.copy_code": "Copiar Código",
   "simplesync.auth.cancel": "Cancelar",
-  "simplesync.auth.expires": "Este código caduca en %s minutos."
+  "simplesync.auth.expires": "Este código caduca en %s minutos.",
+  "simplesync.world.delete_from_drive": "Eliminar también de Google Drive",
+  "simplesync.cloud_worlds.title": "Mundos en la Nube (Google Drive)",
+  "simplesync.cloud_worlds.button": "☁ Mundos Nube",
+  "simplesync.cloud_worlds.loading": "Cargando copias desde Google Drive...",
+  "simplesync.cloud_worlds.empty": "No se encontraron copias de mundos en Google Drive.",
+  "simplesync.cloud_worlds.restore": "Restaurar",
+  "simplesync.cloud_worlds.reinstall": "Reinstalar",
+  "simplesync.cloud_worlds.delete": "Borrar",
+  "simplesync.cloud_worlds.status.installed": "[Instalado]",
+  "simplesync.cloud_worlds.status.archived": "[Archivado / Desinstalado]",
+  "simplesync.cloud_worlds.status.cloud_only": "[Solo en Nube]"
 }

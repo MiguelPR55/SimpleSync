@@ -29,10 +29,13 @@ public class SyncConfig {
     public Map<String, Long> lastSyncTimestamps = new java.util.concurrent.ConcurrentHashMap<>();
     public Map<String, Long> lastLocalSizes = new java.util.concurrent.ConcurrentHashMap<>();
     public Map<String, Long> lastLocalMtimes = new java.util.concurrent.ConcurrentHashMap<>();
+    public java.util.Set<String> ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     public String simpleSyncFolderId;
 
     /**
      * Gets the config directory path, creating it if necessary.
+     *
+     * @return The path to the config directory.
      */
     public static Path getConfigDir() {
         if (configDir == null) {
@@ -48,6 +51,8 @@ public class SyncConfig {
 
     /**
      * Loads the configuration from disk, or creates a new default config.
+     *
+     * @return The loaded or newly created SyncConfig.
      */
     public static SyncConfig load() {
         synchronized (FILE_LOCK) {
@@ -103,6 +108,13 @@ public class SyncConfig {
                 config.lastSyncTimestamps = config.lastSyncTimestamps == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastSyncTimestamps);
                 config.lastLocalSizes = config.lastLocalSizes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalSizes);
                 config.lastLocalMtimes = config.lastLocalMtimes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalMtimes);
+                if (config.ignoredCloudWorlds == null) {
+                    config.ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+                } else {
+                    java.util.Set<String> ignored = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+                    ignored.addAll(config.ignoredCloudWorlds);
+                    config.ignoredCloudWorlds = ignored;
+                }
                 return config;
             }
         } catch (Exception e) {
