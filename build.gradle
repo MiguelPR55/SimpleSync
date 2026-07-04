@@ -63,6 +63,12 @@ dependencies {
     implementation 'com.google.http-client:google-http-client-gson:1.45.3'
     shadowBundle 'com.google.http-client:google-http-client-gson:1.45.3'
 
+    implementation 'org.apache.commons:commons-compress:1.28.0'
+    shadowBundle 'org.apache.commons:commons-compress:1.28.0'
+
+    implementation 'com.github.luben:zstd-jni:1.5.6-8'
+    shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
+
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
@@ -81,6 +87,7 @@ shadowJar {
     relocate 'com.google', 'dev.simplesync.shadow.com.google'
     relocate 'io.grpc', 'dev.simplesync.shadow.io.grpc'
     relocate 'org.apache.http', 'dev.simplesync.shadow.org.apache.http'
+    relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'

@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Google Drive implementation of CloudProvider.
@@ -43,12 +44,14 @@ public class GoogleDriveProvider implements CloudProvider {
     private static final List<String> SCOPES = Collections.singletonList(DriveScopes.DRIVE_FILE);
     private static final String SIMPLESYNC_FOLDER_NAME = "SimpleSync";
     private static final String ZIP_MIME_TYPE = "application/zip";
+    private static final String TAR_ZST_MIME_TYPE = "application/zstd";
     private static final Pattern DRIVE_FILE_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,256}$");
 
     private final Path credentialsDir;
     private final Map<String, String> fileIdCache = new ConcurrentHashMap<>();
-    private Drive driveService;
-    private String simpleSyncFolderId;
+    private volatile Drive driveService;
+    private volatile String simpleSyncFolderId;
+    private final AtomicBoolean isAuthenticating = new AtomicBoolean(false);
 
     public GoogleDriveProvider() {
         this.credentialsDir = SyncConfig.getConfigDir().resolve("credentials");
@@ -60,7 +63,7 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     @Override
-    public boolean isAuthenticated() {
+    public synchronized boolean isAuthenticated() {
         try {
             if (driveService != null) {
                 // Verify the credential is still usable
@@ -76,11 +79,14 @@ public class GoogleDriveProvider implements CloudProvider {
     /**
      * Verifies that the current driveService has a valid (or refreshable) credential.
      */
-    private boolean verifyDriveServiceCredential() {
+    private synchronized boolean verifyDriveServiceCredential() {
         try {
             Credential cred = driveService.getRequestFactory().getInitializer() instanceof Credential c ? c : null;
             if (cred == null) {
-                return true; // Cannot inspect, assume valid
+                return false; // Do not assume valid if cannot inspect credential
+            }
+            if (cred.getRefreshToken() == null && cred.getAccessToken() == null) {
+                return false;
             }
             Long expiresIn = cred.getExpiresInSeconds();
             if (expiresIn != null && expiresIn <= 60) {
@@ -97,7 +103,18 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     @Override
+    public boolean isAuthenticating() {
+        return isAuthenticating.get();
+    }
+
+    @Override
     public void authenticate() throws IOException {
+        if (isAuthenticated()) {
+            return;
+        }
+        if (!isAuthenticating.compareAndSet(false, true)) {
+            throw new IOException("Authentication is already in progress.");
+        }
         try {
             initializeDriveService();
             if (driveService == null) {
@@ -107,6 +124,8 @@ public class GoogleDriveProvider implements CloudProvider {
             SimpleSync.LOGGER.info("[SimpleSync] Successfully authenticated with Google Drive");
         } catch (GeneralSecurityException e) {
             throw new IOException("Security error during authentication", e);
+        } finally {
+            isAuthenticating.set(false);
         }
     }
 
@@ -116,7 +135,10 @@ public class GoogleDriveProvider implements CloudProvider {
         ensureAuthenticated();
         ensureSimpleSyncFolder();
 
-        String fileName = worldName + ".zip";
+        boolean isZip = zipFile.getFileName().toString().endsWith(".zip");
+        String fileName = worldName + (isZip ? ".zip" : ".tar.zst");
+        String mimeType = isZip ? ZIP_MIME_TYPE : TAR_ZST_MIME_TYPE;
+
         SimpleSync.LOGGER.info("[SimpleSync] Uploading {} to Google Drive...", fileName);
 
         String existingFileId = findFileId(fileName);
@@ -124,27 +146,39 @@ public class GoogleDriveProvider implements CloudProvider {
         File fileMetadata = new File();
         fileMetadata.setName(fileName);
 
-        FileContent mediaContent = new FileContent(ZIP_MIME_TYPE, zipFile.toFile());
+        FileContent mediaContent = new FileContent(mimeType, zipFile.toFile());
 
-        File uploadedFile;
+        File uploadedFile = null;
         if (existingFileId != null) {
-            uploadedFile = withRetry(() -> {
-                Drive.Files.Update request = driveService.files().update(existingFileId, fileMetadata, mediaContent)
-                        .setFields("id, name, modifiedTime, size");
-                request.getMediaHttpUploader().setProgressListener(uploader -> {
-                    switch (uploader.getUploadState()) {
-                        case MEDIA_IN_PROGRESS -> {
-                            int percent = (int) (uploader.getProgress() * 100);
-                            CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
+            try {
+                final String fileIdToUpdate = existingFileId;
+                uploadedFile = withRetry(() -> {
+                    Drive.Files.Update request = driveService.files().update(fileIdToUpdate, fileMetadata, mediaContent)
+                            .setFields("id, name, modifiedTime, size");
+                    request.getMediaHttpUploader().setProgressListener(uploader -> {
+                        switch (uploader.getUploadState()) {
+                            case MEDIA_IN_PROGRESS -> {
+                                int percent = (int) (uploader.getProgress() * 100);
+                                CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (" + percent + "%)");
+                            }
+                            case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
+                            default -> {}
                         }
-                        case MEDIA_COMPLETE -> CloudSyncManager.getInstance().setStatus(SyncStatus.UPLOADING, worldName + " (100%)");
-                        default -> {}
-                    }
-                });
-                return request.execute();
-            }, 3);
-            SimpleSync.LOGGER.info("[SimpleSync] Updated existing file: {} (ID: {})", fileName, uploadedFile.getId());
-        } else {
+                    });
+                    return request.execute();
+                }, 3);
+                SimpleSync.LOGGER.info("[SimpleSync] Updated existing file: {} (ID: {})", fileName, uploadedFile.getId());
+            } catch (GoogleJsonResponseException e) {
+                if (e.getStatusCode() == 404) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Google Drive file ID {} was not found (404). Falling back to create...", existingFileId);
+                    fileIdCache.remove(fileName);
+                    existingFileId = null;
+                } else {
+                    throw e;
+                }
+            }
+        }
+        if (existingFileId == null) {
             fileMetadata.setParents(Collections.singletonList(simpleSyncFolderId));
             uploadedFile = withRetry(() -> {
                 Drive.Files.Create request = driveService.files().create(fileMetadata, mediaContent)
@@ -166,6 +200,20 @@ public class GoogleDriveProvider implements CloudProvider {
         if (uploadedFile != null && uploadedFile.getId() != null) {
             fileIdCache.put(fileName, uploadedFile.getId());
         }
+        try {
+            String oldOppositeName = worldName + (isZip ? ".tar.zst" : ".zip");
+            String oldOppositeId = findFileId(oldOppositeName);
+            if (oldOppositeId != null && !oldOppositeId.equals((uploadedFile != null) ? uploadedFile.getId() : existingFileId)) {
+                withRetry(() -> {
+                    driveService.files().delete(oldOppositeId).execute();
+                    return null;
+                }, 3);
+                fileIdCache.remove(oldOppositeName);
+                SimpleSync.LOGGER.info("[SimpleSync] Deleted obsolete {} from Google Drive after uploading {}", oldOppositeName, fileName);
+            }
+        } catch (Exception e) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Could not clean up obsolete archive file from Google Drive: {}", e.getMessage());
+        }
         long mtime = (uploadedFile != null && uploadedFile.getModifiedTime() != null) ? uploadedFile.getModifiedTime().getValue() : System.currentTimeMillis();
         long size = (uploadedFile != null && uploadedFile.getSize() != null) ? uploadedFile.getSize() : 0;
         String id = (uploadedFile != null) ? uploadedFile.getId() : existingFileId;
@@ -173,28 +221,27 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     @Override
-    public void download(String worldName, Path outputZip) throws IOException {
+    public void download(String worldName, Path outputArchive) throws IOException {
         validateWorldName(worldName);
         ensureAuthenticated();
 
-        String fileName = worldName + ".zip";
-        String fileId = findFileId(fileName);
-
-        if (fileId == null) {
+        WorldMetadata meta = getWorldMetadata(worldName);
+        if (meta == null || meta.cloudFileId() == null) {
             throw new IOException("World not found in cloud: " + worldName);
         }
 
-        SimpleSync.LOGGER.info("[SimpleSync] Downloading {} from Google Drive...", fileName);
+        final String targetFileId = meta.cloudFileId();
+        SimpleSync.LOGGER.info("[SimpleSync] Downloading world '{}' (ID: {}) from Google Drive...", worldName, targetFileId);
 
-        Files.createDirectories(outputZip.getParent());
-        if (Files.isSymbolicLink(outputZip)) {
-            throw new IOException("Refusing to write download through symbolic link: " + outputZip);
+        Files.createDirectories(outputArchive.getParent());
+        if (Files.isSymbolicLink(outputArchive)) {
+            throw new IOException("Refusing to write download through symbolic link: " + outputArchive);
         }
 
         withRetry(() -> {
-            Files.deleteIfExists(outputZip);
-            try (OutputStream outputStream = Files.newOutputStream(outputZip, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-                Drive.Files.Get getRequest = driveService.files().get(fileId);
+            Files.deleteIfExists(outputArchive);
+            try (OutputStream outputStream = Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
+                Drive.Files.Get getRequest = driveService.files().get(targetFileId);
                 getRequest.getMediaHttpDownloader().setProgressListener(downloader -> {
                     switch (downloader.getDownloadState()) {
                         case MEDIA_IN_PROGRESS -> {
@@ -210,7 +257,7 @@ public class GoogleDriveProvider implements CloudProvider {
             return null;
         }, 3);
 
-        SimpleSync.LOGGER.info("[SimpleSync] Download complete: {}", outputZip);
+        SimpleSync.LOGGER.info("[SimpleSync] Download complete: {}", outputArchive);
     }
 
     @Override
@@ -221,9 +268,10 @@ public class GoogleDriveProvider implements CloudProvider {
         List<WorldMetadata> worlds = new ArrayList<>();
         fileIdCache.clear();
 
-        String query = String.format("'%s' in parents and mimeType='%s' and trashed=false",
-                simpleSyncFolderId, ZIP_MIME_TYPE);
+        String query = String.format("'%s' in parents and trashed=false",
+                simpleSyncFolderId);
 
+        java.util.Set<String> seenWorldNames = new java.util.HashSet<>();
         String pageToken = null;
         do {
             final String currentPageToken = pageToken;
@@ -241,11 +289,13 @@ public class GoogleDriveProvider implements CloudProvider {
 
             for (File file : result.getFiles()) {
                 String fileName = file.getName();
-                if (fileName == null || !fileName.endsWith(".zip")) {
+                if (fileName == null || (!fileName.endsWith(".tar.zst") && !fileName.endsWith(".zip"))) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unexpected name: {}", fileName);
                     continue;
                 }
-                String worldName = fileName.substring(0, fileName.length() - 4);
+                String worldName = fileName.endsWith(".tar.zst")
+                        ? fileName.substring(0, fileName.length() - ".tar.zst".length())
+                        : fileName.substring(0, fileName.length() - ".zip".length());
                 if (!WorldSyncTask.isWorldNameSafe(worldName)) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unsafe world name: {}", fileName);
                     continue;
@@ -253,6 +303,10 @@ public class GoogleDriveProvider implements CloudProvider {
                 if (file.getId() != null) {
                     fileIdCache.put(fileName, file.getId());
                 }
+                if (seenWorldNames.contains(worldName)) {
+                    continue; // Skip older duplicates or alternate formats of the same world
+                }
+                seenWorldNames.add(worldName);
 
                 long modifiedTime = (file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis();
 
@@ -275,22 +329,44 @@ public class GoogleDriveProvider implements CloudProvider {
         validateWorldName(worldName);
         ensureAuthenticated();
 
-        String fileName = worldName + ".zip";
-        String fileId = findFileId(fileName);
+        String fileIdTarZst = findFileId(worldName + ".tar.zst");
+        String fileIdZip = findFileId(worldName + ".zip");
 
-        if (fileId == null) {
+        if (fileIdTarZst == null && fileIdZip == null) {
             return null;
         }
 
-        File file = withRetry(() -> driveService.files().get(fileId)
+        String targetFileId;
+        if (fileIdTarZst != null && fileIdZip != null) {
+            File fileTarZst = withRetry(() -> driveService.files().get(fileIdTarZst)
+                    .setFields("id, name, modifiedTime, size").execute(), 3);
+            File fileZip = withRetry(() -> driveService.files().get(fileIdZip)
+                    .setFields("id, name, modifiedTime, size").execute(), 3);
+            long timeTarZst = (fileTarZst != null && fileTarZst.getModifiedTime() != null) ? fileTarZst.getModifiedTime().getValue() : System.currentTimeMillis();
+            long timeZip = (fileZip != null && fileZip.getModifiedTime() != null) ? fileZip.getModifiedTime().getValue() : System.currentTimeMillis();
+            if (timeZip > timeTarZst) {
+                fileIdCache.put(worldName + ".zip", fileZip.getId());
+                fileIdCache.remove(worldName + ".tar.zst");
+                return new WorldMetadata(worldName, timeZip, fileZip.getSize() != null ? fileZip.getSize() : 0, fileZip.getId());
+            } else {
+                fileIdCache.put(worldName + ".tar.zst", fileTarZst.getId());
+                fileIdCache.remove(worldName + ".zip");
+                return new WorldMetadata(worldName, timeTarZst, fileTarZst.getSize() != null ? fileTarZst.getSize() : 0, fileTarZst.getId());
+            }
+        } else {
+            targetFileId = (fileIdTarZst != null) ? fileIdTarZst : fileIdZip;
+        }
+
+        final String finalFileId = targetFileId;
+        File file = withRetry(() -> driveService.files().get(finalFileId)
                 .setFields("id, name, modifiedTime, size")
                 .execute(), 3);
 
         return new WorldMetadata(
                 worldName,
-                file.getModifiedTime().getValue(),
-                file.getSize() != null ? file.getSize() : 0,
-                file.getId()
+                (file != null && file.getModifiedTime() != null) ? file.getModifiedTime().getValue() : System.currentTimeMillis(),
+                file != null && file.getSize() != null ? file.getSize() : 0,
+                file != null ? file.getId() : null
         );
     }
 
@@ -299,21 +375,31 @@ public class GoogleDriveProvider implements CloudProvider {
         validateWorldName(worldName);
         ensureAuthenticated();
 
-        String fileName = worldName + ".zip";
-        String fileId = findFileId(fileName);
-
-        if (fileId != null) {
+        String fileNameTarZst = worldName + ".tar.zst";
+        String fileIdTarZst = findFileId(fileNameTarZst);
+        if (fileIdTarZst != null) {
             withRetry(() -> {
-                driveService.files().delete(fileId).execute();
+                driveService.files().delete(fileIdTarZst).execute();
                 return null;
             }, 3);
-            fileIdCache.remove(fileName);
-            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileName);
+            fileIdCache.remove(fileNameTarZst);
+            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameTarZst);
+        }
+
+        String fileNameZip = worldName + ".zip";
+        String fileIdZip = findFileId(fileNameZip);
+        if (fileIdZip != null) {
+            withRetry(() -> {
+                driveService.files().delete(fileIdZip).execute();
+                return null;
+            }, 3);
+            fileIdCache.remove(fileNameZip);
+            SimpleSync.LOGGER.info("[SimpleSync] Deleted {} from Google Drive", fileNameZip);
         }
     }
 
     @Override
-    public void disconnect() throws IOException {
+    public synchronized void disconnect() throws IOException {
         driveService = null;
         simpleSyncFolderId = null;
         fileIdCache.clear();
@@ -365,7 +451,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 .build();
     }
 
-    private void initializeDriveService() throws IOException, GeneralSecurityException {
+    private synchronized void initializeDriveService() throws IOException, GeneralSecurityException {
         final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
         GoogleClientSecrets secrets = loadClientSecrets();
         if (secrets == null) {
@@ -401,7 +487,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 .build();
     }
 
-    private boolean initializeDriveServiceOffline() {
+    private synchronized boolean initializeDriveServiceOffline() {
         try {
             final NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
             GoogleAuthorizationCodeFlow flow = createFlow(transport, loadClientSecrets());
@@ -460,10 +546,19 @@ public class GoogleDriveProvider implements CloudProvider {
         String savedFolderId = config.getSimpleSyncFolderId();
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
             if (isSafeDriveFileId(savedFolderId)) {
-                simpleSyncFolderId = savedFolderId;
-                return;
+                try {
+                    File folder = withRetry(() -> driveService.files().get(savedFolderId).setFields("id, trashed").execute(), 1);
+                    if (folder != null && (folder.getTrashed() == null || !folder.getTrashed())) {
+                        simpleSyncFolderId = savedFolderId;
+                        return;
+                    }
+                    SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was trashed or not found.", savedFolderId);
+                } catch (Exception e) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Failed to verify saved SimpleSync folder ID {} ({}). Will search or recreate...", savedFolderId, e.getMessage());
+                }
+            } else {
+                SimpleSync.LOGGER.warn("[SimpleSync] Ignoring unsafe saved Google Drive folder id");
             }
-            SimpleSync.LOGGER.warn("[SimpleSync] Ignoring unsafe saved Google Drive folder id");
             config.setSimpleSyncFolderId(null);
             config.save();
         }
@@ -543,9 +638,15 @@ public class GoogleDriveProvider implements CloudProvider {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 return action.call();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Operation interrupted", e);
             } catch (IOException e) {
                 if (e instanceof GoogleJsonResponseException jsonEx) {
                     int statusCode = jsonEx.getStatusCode();
+                    if (statusCode == 404) {
+                        simpleSyncFolderId = null;
+                    }
                     if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429) {
                         SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, e.getMessage());
                         throw e;
@@ -555,13 +656,19 @@ public class GoogleDriveProvider implements CloudProvider {
                 SimpleSync.LOGGER.warn("[SimpleSync] Attempt {}/{} failed: {}", attempt, maxAttempts, e.getMessage());
                 if (attempt < maxAttempts) {
                     try {
-                        Thread.sleep(1000L * (1L << (attempt - 1)));
+                        long baseDelay = 1000L * (1L << (attempt - 1));
+                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+                        Thread.sleep(Math.max(100L, baseDelay + jitter));
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
-                        throw lastError;
+                        throw new IOException("Operation interrupted during retry delay", ie);
                     }
                 }
             } catch (Exception e) {
+                if (e instanceof InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Operation interrupted", ie);
+                }
                 throw new IOException(e);
             }
         }

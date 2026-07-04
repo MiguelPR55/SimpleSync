@@ -163,6 +163,38 @@ public class WorldSyncTaskTest {
     }
 
     @Test
+    void testCompressAndExtractWorld_TarZst() throws IOException {
+        Path archive = tempDir.resolve("world.tar.zst");
+        Files.writeString(worldFolder.resolve("level.dat"), "dummy level data");
+        WorldSyncTask.compressWorld(worldFolder, archive);
+        assertTrue(Files.exists(archive), "TAR.ZST archive should be created");
+        assertTrue(Files.size(archive) > 0, "TAR.ZST archive should not be empty");
+
+        Path extractTarget = tempDir.resolve("extracted_world");
+        WorldSyncTask.extractWorld(archive, extractTarget);
+
+        assertTrue(Files.exists(extractTarget.resolve("level.dat")));
+        assertEquals("dummy level data", Files.readString(extractTarget.resolve("level.dat")));
+    }
+
+    @Test
+    void testExtractWorld_MagicByteDetectionForZip() throws IOException {
+        Path archive = tempDir.resolve("world_renamed.tar.zst");
+        Files.writeString(worldFolder.resolve("level.dat"), "dummy zip level data");
+        // Compress as zip directly
+        Path tempZip = tempDir.resolve("temp.zip");
+        WorldSyncTask.compressWorld(worldFolder, tempZip);
+        // Rename .zip to .tar.zst to test magic byte fallback detection
+        Files.move(tempZip, archive);
+
+        Path extractTarget = tempDir.resolve("extracted_zip_world");
+        WorldSyncTask.extractWorld(archive, extractTarget);
+
+        assertTrue(Files.exists(extractTarget.resolve("level.dat")));
+        assertEquals("dummy zip level data", Files.readString(extractTarget.resolve("level.dat")));
+    }
+
+    @Test
     void testCleanupOrphanedDirectories() throws IOException {
         Path savesDir = tempDir.resolve("saves");
         Files.createDirectories(savesDir);

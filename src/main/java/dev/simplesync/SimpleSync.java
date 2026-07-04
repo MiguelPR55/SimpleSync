@@ -34,6 +34,7 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             if (isIntegratedServer(server) && lastWorldName != null) {
+                needsTitleScreenSync = true;
                 if (SyncConfig.load().autoSyncOnExit) {
                     LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
                     CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);

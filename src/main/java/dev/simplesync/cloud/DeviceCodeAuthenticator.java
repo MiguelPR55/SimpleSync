@@ -53,6 +53,10 @@ public class DeviceCodeAuthenticator {
 
         String deviceCodeBody = "client_id=" + enc(clientId) + "&scope=" + enc(scope);
         JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
+        
+        if (deviceResp == null || !deviceResp.has("device_code") || !deviceResp.has("user_code") || !deviceResp.has("expires_in")) {
+            throw new IOException("Malformed Google OAuth Device Authorization response: " + (deviceResp != null ? deviceResp.toString() : "null"));
+        }
 
         String deviceCode = deviceResp.get("device_code").getAsString();
         String userCode = deviceResp.get("user_code").getAsString();
@@ -100,7 +104,13 @@ public class DeviceCodeAuthenticator {
                     + "&device_code=" + enc(deviceCode)
                     + "&grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code");
 
-            HttpResponse<String> raw = rawPost(TOKEN_URL, tokenBody);
+            HttpResponse<String> raw;
+            try {
+                raw = rawPostWithRetry(TOKEN_URL, tokenBody);
+            } catch (IOException e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
+                continue;
+            }
             JsonObject body = JsonParser.parseString(raw.body()).getAsJsonObject();
 
             if (raw.statusCode() == 200 && body.has("access_token")) {
@@ -132,16 +142,42 @@ public class DeviceCodeAuthenticator {
     }
 
     private JsonObject post(String url, String body) throws IOException, InterruptedException {
-        HttpResponse<String> resp = rawPost(url, body);
+        HttpResponse<String> resp = rawPostWithRetry(url, body);
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("HTTP error from Google API (" + resp.statusCode() + "): " + resp.body());
         }
         return JsonParser.parseString(resp.body()).getAsJsonObject();
     }
 
+    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException, InterruptedException {
+        int attempt = 0;
+        int maxAttempts = 3;
+        IOException lastEx = null;
+        while (attempt < maxAttempts) {
+            attempt++;
+            try {
+                HttpResponse<String> resp = rawPost(url, body);
+                if (resp.statusCode() >= 500) {
+                    lastEx = new IOException("Google server returned HTTP " + resp.statusCode());
+                } else {
+                    return resp;
+                }
+            } catch (IOException e) {
+                lastEx = e;
+            }
+            if (attempt < maxAttempts) {
+                long delay = 1000L * (1L << (attempt - 1));
+                SimpleSync.LOGGER.warn("[SimpleSync] Transient post error (attempt {}/{}), retrying in {}ms...", attempt, maxAttempts, delay);
+                Thread.sleep(delay);
+            }
+        }
+        throw lastEx;
+    }
+
     private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .header("Content-Type", "application/x-www-form-urlencoded")
+                .timeout(Duration.ofSeconds(30))
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());

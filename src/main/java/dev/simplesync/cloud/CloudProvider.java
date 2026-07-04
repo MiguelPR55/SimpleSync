@@ -29,6 +29,11 @@ public interface CloudProvider {
     void authenticate() throws IOException;
 
     /**
+     * @return true if an authentication flow is currently in progress
+     */
+    boolean isAuthenticating();
+
+    /**
      * Uploads a world ZIP file to the cloud.
      * @param worldName The name of the world
      * @param zipFile   Path to the ZIP file to upload
