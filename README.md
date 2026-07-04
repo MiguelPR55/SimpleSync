@@ -1,25 +1,17 @@
 # SimpleSync
 
-SimpleSync is a Minecraft mod developed for the Fabric platform (Java 21) that automatically synchronizes your single-player world saves with Google Drive.
+SimpleSync es un mod para Minecraft que se encarga de guardar y sincronizar tus mundos de un solo jugador directamente en tu cuenta de Google Drive.
 
-## Features
+## Que hace el mod
 
-- Background synchronization: Upload and download operations run asynchronously on a background thread to prevent game freezes.
-- Conflict detection and resolution: If a world has been modified both locally and in the cloud, a GUI is displayed so you can choose which version to keep.
-- Visual HUD overlay: Displays real-time sync status (compressing, uploading, downloading, etc.) along with the completion percentage.
-- Robustness and security:
-  - Automatic self-healing for abnormal shutdowns (cleans up and restores backups).
-  - Prevention of path traversal attacks (zip-slip).
-  - Retries with exponential backoff, failing immediately on permanent client-side errors (4xx).
+- Guarda tus mundos en la nube de forma automatica al entrar y salir del juego, sin pausar ni congelar la pantalla.
+- Evita que pierdas el progreso si juegas en ordenadores distintos, manteniendo siempre la version mas reciente.
+- Te avisa con un menu visual si hay algun conflicto (por ejemplo, si has jugado sin conexion en un ordenador y luego intentas entrar desde otro) para que elijas que version conservar.
+- Incluye un gestor de mundos en la nube para ver todas tus copias guardadas en Google Drive, permitiendote restaurarlas o borrarlas cuando quieras para ahorrar espacio en tu ordenador.
+- Pregunta si quieres borrar la copia de la nube al eliminar un mundo del juego, o si prefieres dejarla guardada alli como una copia de seguridad.
 
-## Requirements and Installation
+## Requisitos y uso basico
 
-1. Ensure you have Minecraft with Fabric Loader installed.
-2. Place the mod's `.jar` file in your `mods/` directory.
-3. Create a project in the Google Cloud Console, enable the Google Drive API, create OAuth2 credentials for a desktop application, and download the credentials JSON file.
-4. Place the downloaded JSON file as `client_secret.json` in the path `config/simplesync/client_secret.json`.
-5. Upon launching the game for the first time, the mod will prompt you for authorization in your web browser.
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+1. Coloca el archivo del mod en tu carpeta de mods.
+2. Inicia el juego y sigue los pasos en pantalla para conectar de forma segura tu cuenta de Google Drive.
+3. El mod se encargara del resto de forma automatica en segundo plano.
