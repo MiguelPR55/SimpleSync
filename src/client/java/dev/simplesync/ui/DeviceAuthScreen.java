@@ -40,7 +40,7 @@ public class DeviceAuthScreen extends Screen {
         // Open Browser button
         this.addRenderableWidget(Button.builder(
                         Component.translatable("simplesync.auth.open_browser"),
-                        button -> net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, verificationUrl))
+                        button -> SyncConfigScreen.confirmAndOpenUrl(this, verificationUrl))
                 .bounds(centerX - buttonWidth - 5, buttonY, buttonWidth, 20)
                 .build());
 

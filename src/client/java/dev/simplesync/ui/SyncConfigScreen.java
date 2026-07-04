@@ -271,25 +271,34 @@ public class SyncConfigScreen extends Screen {
             // Step 1: console.cloud.google.com
             int step1Width = this.font.width(Component.translatable("simplesync.tutorial.step1"));
             if (event.y() >= startY - 4 && event.y() <= startY + 14 && event.x() >= centerX - step1Width / 2 && event.x() <= centerX + step1Width / 2) {
-                net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, "https://console.cloud.google.com/");
+                confirmAndOpenUrl(this, "https://console.cloud.google.com/");
                 return true;
             }
 
             // Step 2: Google Drive API Library
             int step2Width = this.font.width(Component.translatable("simplesync.tutorial.step2"));
             if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 14 && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
-                net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
+                confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
                 return true;
             }
 
             // Step 6: Local config/simplesync/ Folder
             int step6Width = this.font.width(Component.translatable("simplesync.tutorial.step6"));
             if (event.y() >= (startY + stepGap * 5) - 4 && event.y() <= (startY + stepGap * 5) + 14 && event.x() >= centerX - step6Width / 2 && event.x() <= centerX + step6Width / 2) {
-                net.minecraft.util.Util.getPlatform().openUri(dev.simplesync.config.SyncConfig.getConfigDir().toUri());
+                dev.simplesync.SimpleSync.openFileRobust(dev.simplesync.config.SyncConfig.getConfigDir().toFile());
                 return true;
             }
         }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    public static void confirmAndOpenUrl(net.minecraft.client.gui.screens.Screen parent, String url) {
+        net.minecraft.client.Minecraft.getInstance().gui.setScreen(new net.minecraft.client.gui.screens.ConfirmLinkScreen(confirmed -> {
+            if (confirmed) {
+                dev.simplesync.SimpleSync.openUrl(url);
+            }
+            net.minecraft.client.Minecraft.getInstance().gui.setScreen(parent);
+        }, url, true));
     }
 
     @Override
