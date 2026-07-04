@@ -79,33 +79,33 @@ public class DeviceAuthScreen extends Screen {
 
         // Title
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.auth.title"), centerX, y, 0xFFFFFF);
+                Component.translatable("simplesync.auth.title"), centerX, y, 0xFFFFFFFF);
         y += 22;
 
         // URL Instruction
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.auth.url_instruction"), centerX, y, 0xDDDDDD);
+                Component.translatable("simplesync.auth.url_instruction"), centerX, y, 0xFFDDDDDD);
         y += 15;
 
         // Verification URL (in cyan)
         extractor.centeredText(this.font,
-                Component.literal(verificationUrl), centerX, y, 0x55FFFF);
+                Component.literal(verificationUrl), centerX, y, 0xFF55FFFF);
         y += 22;
 
         // Code Instruction
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.auth.code_instruction"), centerX, y, 0xDDDDDD);
+                Component.translatable("simplesync.auth.code_instruction"), centerX, y, 0xFFDDDDDD);
         y += 16;
 
         // User Code (in yellow bold)
         extractor.centeredText(this.font,
-                Component.literal("§l" + userCode), centerX, y, 0xFFD54F);
+                Component.literal("§l" + userCode), centerX, y, 0xFFFFD54F);
         y += 22;
 
         // Expiration info
         long mins = Math.max(1, expiresInSeconds / 60);
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.auth.expires", mins), centerX, y, 0xAAAAAA);
+                Component.translatable("simplesync.auth.expires", mins), centerX, y, 0xFFAAAAAA);
     }
 
     @Override

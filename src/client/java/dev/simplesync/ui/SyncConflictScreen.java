@@ -87,24 +87,24 @@ public class SyncConflictScreen extends Screen {
         int y = this.height / 2 - 60;
 
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.conflict.title"), centerX, y, 0xFFFFFF);
+                Component.translatable("simplesync.conflict.title"), centerX, y, 0xFFFFFFFF);
 
         y += 20;
 
         extractor.centeredText(this.font,
-                Component.translatable("simplesync.conflict.world", worldName), centerX, y, 0xAAAAAA);
+                Component.translatable("simplesync.conflict.world", worldName), centerX, y, 0xFFAAAAAA);
 
         y += 25;
 
         extractor.centeredText(this.font,
                 Component.translatable("simplesync.conflict.local_version", formattedLocalDate),
-                centerX, y, 0x81C784);
+                centerX, y, 0xFF81C784);
 
         y += 15;
 
         extractor.centeredText(this.font,
                 Component.translatable("simplesync.conflict.cloud_version", formattedCloudDate),
-                centerX, y, 0x4FC3F7);
+                centerX, y, 0xFF4FC3F7);
     }
 
     @Override

@@ -204,23 +204,23 @@ public class SyncConfigScreen extends Screen {
         if (showingTutorial) {
             // --- DRAW TUTORIAL GUIDE SCREEN ---
             extractor.centeredText(this.font,
-                    Component.translatable("simplesync.tutorial.title"), centerX, 20, 0xFFFFFF);
+                    Component.translatable("simplesync.tutorial.title"), centerX, 20, 0xFFFFFFFF);
 
             int startY = 45;
             int stepGap = 18;
 
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step1"), centerX, startY, 0xDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap, 0xDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2, 0xDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 3, 0xDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 4, 0xDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 5, 0xDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step1"), centerX, startY, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 3, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 4, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 5, 0xFFDDDDDD);
             return;
         }
 
         // --- DRAW NORMAL CONFIGURATION OPTIONS SCREEN ---
         extractor.centeredText(this.font,
-                this.title, centerX, 25, 0xFFFFFF);
+                this.title, centerX, 25, 0xFFFFFFFF);
 
         int centerY = this.height / 2;
 
@@ -229,13 +229,13 @@ public class SyncConfigScreen extends Screen {
 
         if (authenticating) {
             statusTextVal = Component.translatable("simplesync.config.connecting");
-            statusColor = 0xFFD54F; // Yellow
+            statusColor = 0xFFFFD54F; // Yellow
         } else if (authenticated) {
             statusTextVal = Component.translatable("simplesync.config.status.connected");
-            statusColor = 0x81C784; // Green
+            statusColor = 0xFF81C784; // Green
         } else {
             statusTextVal = Component.translatable("simplesync.config.status.disconnected");
-            statusColor = 0xFFD54F; // Yellow
+            statusColor = 0xFFFFD54F; // Yellow
         }
 
         Component statusText = Component.translatable("simplesync.config.status", statusTextVal);
@@ -244,7 +244,7 @@ public class SyncConfigScreen extends Screen {
         // Draw authentication errors if any
         if (authError != null) {
             Component errText = Component.translatable("simplesync.config.auth_failed", authError);
-            extractor.centeredText(this.font, errText, centerX, centerY + 2, 0xE57373);
+            extractor.centeredText(this.font, errText, centerX, centerY + 2, 0xFFE57373);
         }
     }
 
