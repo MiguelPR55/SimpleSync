@@ -1,17 +1,17 @@
 # SimpleSync
 
-SimpleSync es un mod para Minecraft que se encarga de guardar y sincronizar tus mundos de un solo jugador directamente en tu cuenta de Google Drive.
+SimpleSync is a Minecraft mod that automatically saves and synchronizes your single-player worlds directly to your Google Drive account.
 
-## Que hace el mod
+## What the mod does
 
-- Guarda tus mundos en la nube de forma automatica al entrar y salir del juego, sin pausar ni congelar la pantalla.
-- Evita que pierdas el progreso si juegas en ordenadores distintos, manteniendo siempre la version mas reciente.
-- Te avisa con un menu visual si hay algun conflicto (por ejemplo, si has jugado sin conexion en un ordenador y luego intentas entrar desde otro) para que elijas que version conservar.
-- Incluye un gestor de mundos en la nube para ver todas tus copias guardadas en Google Drive, permitiendote restaurarlas o borrarlas cuando quieras para ahorrar espacio en tu ordenador.
-- Pregunta si quieres borrar la copia de la nube al eliminar un mundo del juego, o si prefieres dejarla guardada alli como una copia de seguridad.
+- Automatically saves your worlds to the cloud when entering and exiting the game, without pausing or freezing your screen.
+- Prevents you from losing progress when playing on different computers, always keeping the most recent version.
+- Warns you with a visual menu if a conflict occurs (for example, if you played offline on one computer and then try to log in from another) so you can choose which version to keep.
+- Includes a cloud world manager to view all your saves on Google Drive, allowing you to restore or delete them whenever you want to save space on your computer.
+- Asks if you want to delete the cloud copy when deleting a world from the game, or if you prefer to keep it there as a backup.
 
-## Requisitos y uso basico
+## Requirements and basic usage
 
-1. Coloca el archivo del mod en tu carpeta de mods.
-2. Inicia el juego y sigue los pasos en pantalla para conectar de forma segura tu cuenta de Google Drive.
-3. El mod se encargara del resto de forma automatica en segundo plano.
+1. Place the mod file in your mods folder.
+2. Start the game and follow the on-screen steps to securely connect your Google Drive account.
+3. The mod will automatically handle the rest in the background.
