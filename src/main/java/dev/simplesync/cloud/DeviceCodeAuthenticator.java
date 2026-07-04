@@ -1,8 +1,5 @@
 package dev.simplesync.cloud;
 
-import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.auth.oauth2.TokenResponse;
-import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.simplesync.SimpleSync;
@@ -18,8 +15,8 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Implements the Google OAuth 2.0 Device Authorization Grant (RFC 8628).
- * Feeds a TokenResponse into GoogleAuthorizationCodeFlow to reuse existing token persistence and refresh logic.
+ * Implements the Google OAuth 2.0 Device Authorization Grant (RFC 8628) using Java's native HttpClient.
+ * Stores retrieved tokens into TokenStore.
  */
 public class DeviceCodeAuthenticator {
 
@@ -34,16 +31,14 @@ public class DeviceCodeAuthenticator {
      * Executes the device authorization grant flow.
      * Must be called from a background worker thread (never on the render thread).
      *
-     * @param flow         The GoogleAuthorizationCodeFlow to store the credential in
      * @param clientId     The OAuth Client ID
      * @param clientSecret The OAuth Client Secret
-     * @param scope        The requested scope (e.g., DriveScopes.DRIVE_FILE)
+     * @param scope        The requested scope (e.g., "https://www.googleapis.com/auth/drive.file")
      * @param callback     Optional callback to display the user code and verification URL in the UI
      * @throws IOException          if authentication fails or is cancelled
      * @throws InterruptedException if the thread is interrupted while waiting
      */
-    public Credential authenticate(
-            GoogleAuthorizationCodeFlow flow,
+    public void authenticate(
             String clientId,
             String clientSecret,
             String scope,
@@ -53,6 +48,10 @@ public class DeviceCodeAuthenticator {
 
         String deviceCodeBody = "client_id=" + enc(clientId) + "&scope=" + enc(scope);
         JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
+        
+        if (deviceResp == null || !deviceResp.has("device_code") || !deviceResp.has("user_code") || !deviceResp.has("expires_in")) {
+            throw new IOException("Malformed Google OAuth Device Authorization response: " + (deviceResp != null ? deviceResp.toString() : "null"));
+        }
 
         String deviceCode = deviceResp.get("device_code").getAsString();
         String userCode = deviceResp.get("user_code").getAsString();
@@ -100,18 +99,24 @@ public class DeviceCodeAuthenticator {
                     + "&device_code=" + enc(deviceCode)
                     + "&grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code");
 
-            HttpResponse<String> raw = rawPost(TOKEN_URL, tokenBody);
+            HttpResponse<String> raw;
+            try {
+                raw = rawPostWithRetry(TOKEN_URL, tokenBody);
+            } catch (IOException e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
+                continue;
+            }
             JsonObject body = JsonParser.parseString(raw.body()).getAsJsonObject();
 
             if (raw.statusCode() == 200 && body.has("access_token")) {
                 SimpleSync.LOGGER.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
-                TokenResponse tokenResponse = new TokenResponse();
-                tokenResponse.setAccessToken(body.get("access_token").getAsString());
-                tokenResponse.setRefreshToken(body.has("refresh_token") ? body.get("refresh_token").getAsString() : null);
-                tokenResponse.setExpiresInSeconds(body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L);
-                tokenResponse.setTokenType("Bearer");
-                tokenResponse.setScope(scope);
-                return flow.createAndStoreCredential(tokenResponse, "user");
+                String accessToken = body.get("access_token").getAsString();
+                String refreshToken = body.has("refresh_token") ? body.get("refresh_token").getAsString() : null;
+                long expiresInSeconds = body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L;
+                long expiresAtMs = System.currentTimeMillis() + (expiresInSeconds * 1000L);
+                
+                TokenStore.save(new TokenStore.TokenData(accessToken, refreshToken, expiresAtMs));
+                return;
             }
 
             String error = body.has("error") ? body.get("error").getAsString() : "unknown_error";
@@ -132,16 +137,42 @@ public class DeviceCodeAuthenticator {
     }
 
     private JsonObject post(String url, String body) throws IOException, InterruptedException {
-        HttpResponse<String> resp = rawPost(url, body);
+        HttpResponse<String> resp = rawPostWithRetry(url, body);
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("HTTP error from Google API (" + resp.statusCode() + "): " + resp.body());
         }
         return JsonParser.parseString(resp.body()).getAsJsonObject();
     }
 
+    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException, InterruptedException {
+        int attempt = 0;
+        int maxAttempts = 3;
+        IOException lastEx = null;
+        while (attempt < maxAttempts) {
+            attempt++;
+            try {
+                HttpResponse<String> resp = rawPost(url, body);
+                if (resp.statusCode() >= 500) {
+                    lastEx = new IOException("Google server returned HTTP " + resp.statusCode());
+                } else {
+                    return resp;
+                }
+            } catch (IOException e) {
+                lastEx = e;
+            }
+            if (attempt < maxAttempts) {
+                long delay = 1000L * (1L << (attempt - 1));
+                SimpleSync.LOGGER.warn("[SimpleSync] Transient post error (attempt {}/{}), retrying in {}ms...", attempt, maxAttempts, delay);
+                Thread.sleep(delay);
+            }
+        }
+        throw lastEx;
+    }
+
     private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .header("Content-Type", "application/x-www-form-urlencoded")
+                .timeout(Duration.ofSeconds(30))
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());

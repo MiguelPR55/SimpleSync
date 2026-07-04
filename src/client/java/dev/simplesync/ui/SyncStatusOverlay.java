@@ -26,7 +26,15 @@ public class SyncStatusOverlay {
         return INSTANCE;
     }
 
+    private long lastRenderTimeMs = -1;
+
     public void renderOverlay(GuiGraphicsExtractor extractor) {
+        long now = System.currentTimeMillis();
+        if (now - lastRenderTimeMs < 5) {
+            return;
+        }
+        lastRenderTimeMs = now;
+
         CloudSyncManager manager = CloudSyncManager.getInstance();
         StatusSnapshot snapshot = manager.getStatusSnapshot();
         SyncStatus status = snapshot.status();

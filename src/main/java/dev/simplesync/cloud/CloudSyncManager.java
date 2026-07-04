@@ -26,11 +26,11 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class CloudSyncManager {
 
-    private static CloudSyncManager instance;
+    private static volatile CloudSyncManager instance;
 
     private final ExecutorService executor;
     private final AtomicReference<StatusSnapshot> status;
-    private CloudProvider provider;
+    private volatile CloudProvider provider;
     private Path savesDirectory;
     private ConflictCallback conflictCallback;
     private Runnable conflictCancelCallback;
@@ -70,16 +70,24 @@ public class CloudSyncManager {
         }, "SimpleSync-ShutdownHook"));
     }
 
-    public static synchronized CloudSyncManager getInstance() {
+    public static CloudSyncManager getInstance() {
         if (instance == null) {
-            instance = new CloudSyncManager();
+            synchronized (CloudSyncManager.class) {
+                if (instance == null) {
+                    instance = new CloudSyncManager();
+                }
+            }
         }
         return instance;
     }
 
     public CloudProvider getProvider() {
         if (provider == null) {
-            provider = new GoogleDriveProvider();
+            synchronized (this) {
+                if (provider == null) {
+                    provider = new GoogleDriveProvider();
+                }
+            }
         }
         return provider;
     }
@@ -94,18 +102,22 @@ public class CloudSyncManager {
                 CloudProvider cloud = getProvider();
                 if (!cloud.isAuthenticated()) {
                     setStatus(SyncStatus.AUTHENTICATING, "");
-                    cloud.authenticate();
+                    if (cloud.isAuthenticating()) {
+                        throw new IOException("Authentication pending: please complete device authorization in browser.");
+                    }
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            cloud.authenticate();
+                        } catch (Exception e) {
+                            SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
+                        }
+                    });
+                    throw new IOException("Authentication required: please complete device authorization in browser.");
                 }
 
                 setStatus(SyncStatus.CHECKING, "");
 
                 List<WorldMetadata> cloudWorlds = cloud.listWorlds();
-                if (cloudWorlds.isEmpty()) {
-                    SimpleSync.LOGGER.info("[SimpleSync] No worlds found in cloud");
-                    clearStatus();
-                    return;
-                }
-
                 Path savesDir = getSavesDirectory();
                 WorldSyncTask.cleanupOrphanedDirectories(savesDir);
                 SyncConfig config = SyncConfig.load();
@@ -127,65 +139,95 @@ public class CloudSyncManager {
                         long localTimestamp = config.getLastSyncTimestamp(worldName);
 
                         if (cloudWorld.lastModified() > localTimestamp || !java.nio.file.Files.isDirectory(worldFolder)) {
+                            if (!java.nio.file.Files.isDirectory(worldFolder)) {
+                                if (localTimestamp > 0) {
+                                    SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted locally (previous sync timestamp found). Deleting from cloud...", worldName);
+                                    try {
+                                        cloud.delete(worldName);
+                                    } catch (Exception deleteEx) {
+                                        SimpleSync.LOGGER.error("[SimpleSync] Failed to delete remote world '{}'", worldName, deleteEx);
+                                    }
+                                    config.lastSyncTimestamps.remove(worldName);
+                                    config.lastLocalSizes.remove(worldName);
+                                    config.lastLocalMtimes.remove(worldName);
+                                    continue;
+                                }
+                            }
+
                             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
                             boolean localModified = WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats);
-                            if (localModified && conflictCallback != null) {
-                                SimpleSync.LOGGER.info("[SimpleSync] Conflict detected for world '{}'", worldName);
-                                setStatus(SyncStatus.CONFLICT, worldName);
+                            if (localModified) {
+                                if (conflictCallback != null) {
+                                    SimpleSync.LOGGER.info("[SimpleSync] Conflict detected for world '{}'", worldName);
+                                    setStatus(SyncStatus.CONFLICT, worldName);
 
-                                CompletableFuture<Boolean> conflictResolution = new CompletableFuture<>();
-                                long localMtime = stats.latestModifiedTime();
-                                conflictCallback.onConflict(
-                                        worldName,
-                                        localMtime > 0 ? localMtime : System.currentTimeMillis(),
-                                        cloudWorld.lastModified(),
-                                        () -> conflictResolution.complete(true),
-                                        () -> conflictResolution.complete(false)
-                                );
+                                    CompletableFuture<Boolean> conflictResolution = new CompletableFuture<>();
+                                    long localMtime = stats.latestModifiedTime();
+                                    conflictCallback.onConflict(
+                                            worldName,
+                                            localMtime > 0 ? localMtime : System.currentTimeMillis(),
+                                            cloudWorld.lastModified(),
+                                            () -> conflictResolution.complete(true),
+                                            () -> conflictResolution.complete(false)
+                                    );
 
-                                boolean useCloud;
-                                try {
-                                    useCloud = conflictResolution.get(120, TimeUnit.SECONDS);
-                                } catch (java.util.concurrent.TimeoutException te) {
-                                    SimpleSync.LOGGER.warn("[SimpleSync] Conflict screen timed out (120s) for world '{}'. Defaulting to keep local.", worldName);
-                                    if (conflictCancelCallback != null) {
-                                        conflictCancelCallback.run();
+                                    boolean useCloud;
+                                    try {
+                                        useCloud = conflictResolution.get(120, TimeUnit.SECONDS);
+                                    } catch (java.util.concurrent.TimeoutException te) {
+                                        SimpleSync.LOGGER.warn("[SimpleSync] Conflict screen timed out (120s) for world '{}'. Defaulting to keep local.", worldName);
+                                        if (conflictCancelCallback != null) {
+                                            conflictCancelCallback.run();
+                                        }
+                                        conflictResolution.complete(false);
+                                        useCloud = false;
+                                    } catch (ExecutionException ee) {
+                                        SimpleSync.LOGGER.error("[SimpleSync] Error during conflict resolution for world '{}'", worldName, ee.getCause());
+                                        conflictResolution.complete(false);
+                                        useCloud = false;
+                                    } catch (InterruptedException ie) {
+                                        SimpleSync.LOGGER.warn("[SimpleSync] Sync interrupted during conflict resolution for world '{}'", worldName);
+                                        conflictResolution.complete(false);
+                                        Thread.currentThread().interrupt();
+                                        break;
                                     }
-                                    useCloud = false;
-                                } catch (ExecutionException ee) {
-                                    SimpleSync.LOGGER.error("[SimpleSync] Error during conflict resolution for world '{}'", worldName, ee.getCause());
-                                    useCloud = false;
-                                } catch (InterruptedException ie) {
-                                    SimpleSync.LOGGER.warn("[SimpleSync] Sync interrupted during conflict resolution for world '{}'", worldName);
-                                    Thread.currentThread().interrupt();
-                                    break;
-                                }
 
-                                if (!useCloud) {
-                                    SimpleSync.LOGGER.info("[SimpleSync] User chose to keep local version of '{}', triggering upload to cloud...", worldName);
-                                    uploadWorldAsync(worldName);
+                                    if (!useCloud) {
+                                        SimpleSync.LOGGER.info("[SimpleSync] User chose to keep local version of '{}', triggering upload to cloud...", worldName);
+                                        uploadWorldSync(worldName);
+                                        continue;
+                                    }
+                                } else {
+                                    SimpleSync.LOGGER.warn("[SimpleSync] Conflict detected for world '{}', but no conflict callback is registered! Defaulting to keep local version and uploading to cloud.", worldName);
+                                    uploadWorldSync(worldName);
                                     continue;
                                 }
                             }
 
                             setStatus(SyncStatus.DOWNLOADING, worldName);
 
-                            Path tempZip = getTempDir().resolve(worldName + ".zip");
+                            Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
                             try {
-                                cloud.download(worldName, tempZip);
+                                cloud.download(worldName, tempArchive);
 
                                 setStatus(SyncStatus.EXTRACTING, worldName);
-                                WorldSyncTask.extractWorld(tempZip, worldFolder);
+                                WorldSyncTask.extractWorld(tempArchive, worldFolder);
 
                                 updateWorldTracking(config, worldName, worldFolder, cloudWorld.lastModified());
 
                                 downloadCount++;
                                 SimpleSync.LOGGER.info("[SimpleSync] Downloaded world: {}", worldName);
                             } finally {
-                                deleteQuietly(tempZip);
+                                deleteQuietly(tempArchive);
                             }
                         } else {
-                            SimpleSync.LOGGER.info("[SimpleSync] World '{}' is up to date", worldName);
+                            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
+                            if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
+                                SimpleSync.LOGGER.info("[SimpleSync] Local world '{}' has modifications not present in cloud. Triggering upload...", worldName);
+                                uploadWorldSync(worldName);
+                            } else {
+                                SimpleSync.LOGGER.info("[SimpleSync] World '{}' is up to date", worldName);
+                            }
                         }
                     } catch (Exception e) {
                         SimpleSync.LOGGER.error("[SimpleSync] Failed to process world '{}', skipping to next world", cloudWorld.worldName(), e);
@@ -208,82 +250,96 @@ public class CloudSyncManager {
     }
 
     /**
-     * Uploads a specific world to the cloud.
-     * Called when the player exits a world ("Save and Quit").
+     * Uploads a specific world to the cloud synchronously.
+     * Must be called from a background thread (worker thread).
+     */
+    public void uploadWorldSync(String worldName) throws IOException {
+        if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Security violation: invalid world name '{}'", worldName);
+            setStatus(SyncStatus.ERROR, "Invalid world name");
+            return;
+        }
+
+        CloudProvider cloud = getProvider();
+        if (!cloud.isAuthenticated()) {
+            setStatus(SyncStatus.AUTHENTICATING, "");
+            if (cloud.isAuthenticating()) {
+                throw new IOException("Authentication pending: please complete device authorization in browser.");
+            }
+            CompletableFuture.runAsync(() -> {
+                try {
+                    cloud.authenticate();
+                } catch (Exception e) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
+                }
+            });
+            throw new IOException("Authentication required: please complete device authorization in browser.");
+        }
+
+        Path savesDir = getSavesDirectory();
+        Path worldFolder = savesDir.resolve(worldName).normalize();
+        if (!worldFolder.startsWith(savesDir.normalize()) || !Files.isDirectory(worldFolder)) {
+            SimpleSync.LOGGER.warn("[SimpleSync] World folder not found or unsafe: {}", worldFolder);
+            setStatus(SyncStatus.ERROR, worldName);
+            return;
+        }
+
+        SyncConfig config = SyncConfig.load();
+        WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
+        if (!WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
+            SimpleSync.LOGGER.info("[SimpleSync] World '{}' has not changed since last sync, skipping upload", worldName);
+            setStatus(SyncStatus.DONE, "");
+            return;
+        }
+
+        setStatus(SyncStatus.COMPRESSING, worldName);
+        Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
+        try {
+            WorldSyncTask.compressWorld(worldFolder, tempArchive);
+
+            long archiveSize = Files.size(tempArchive);
+            if (archiveSize > 50L * 1024 * 1024 * 1024) {
+                throw new IOException("Compressed world exceeds maximum supported size (50 GB): " + archiveSize + " bytes");
+            }
+
+            setStatus(SyncStatus.UPLOADING, worldName);
+            WorldMetadata uploadedMeta;
+            try {
+                uploadedMeta = cloud.upload(worldName, tempArchive);
+            } catch (IOException uploadEx) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Upload failed/timed out. Verifying if file reached cloud: {}", uploadEx.getMessage());
+                try {
+                    uploadedMeta = cloud.getWorldMetadata(worldName);
+                    if (uploadedMeta == null || uploadedMeta.sizeBytes() != archiveSize) {
+                        throw uploadEx;
+                    }
+                    SimpleSync.LOGGER.info("[SimpleSync] Verified that the remote file size matches the local archive. Considering upload successful.");
+                } catch (Exception verifyEx) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Failed to verify remote file status", verifyEx);
+                    throw uploadEx;
+                }
+            }
+
+            long newTimestamp = uploadedMeta != null && uploadedMeta.lastModified() > 0 ? uploadedMeta.lastModified() : System.currentTimeMillis();
+            config.setLastSyncTimestamp(worldName, newTimestamp);
+            config.setLastLocalSize(worldName, stats.size());
+            config.setLastLocalMtime(worldName, stats.latestModifiedTime());
+            config.save();
+
+            setStatus(SyncStatus.DONE, "");
+            SimpleSync.LOGGER.info("[SimpleSync] Successfully uploaded world: {}", worldName);
+        } finally {
+            deleteQuietly(tempArchive);
+        }
+    }
+
+    /**
+     * Uploads a specific world to the cloud asynchronously on the executor thread.
      */
     public CompletableFuture<Void> uploadWorldAsync(String worldName) {
         return CompletableFuture.runAsync(() -> {
             try {
-                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] Security violation: invalid world name '{}'", worldName);
-                    setStatus(SyncStatus.ERROR, "Invalid world name");
-                    return;
-                }
-
-                CloudProvider cloud = getProvider();
-                if (!cloud.isAuthenticated()) {
-                    setStatus(SyncStatus.AUTHENTICATING, "");
-                    cloud.authenticate();
-                }
-
-                Path savesDir = getSavesDirectory();
-                Path worldFolder = savesDir.resolve(worldName).normalize();
-                if (!worldFolder.startsWith(savesDir.normalize()) || !Files.isDirectory(worldFolder)) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] World folder not found or unsafe: {}", worldFolder);
-                    setStatus(SyncStatus.ERROR, worldName);
-                    return;
-                }
-
-                SyncConfig config = SyncConfig.load();
-                WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
-                if (!WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
-                    SimpleSync.LOGGER.info("[SimpleSync] World '{}' has not changed since last sync, skipping upload", worldName);
-                    setStatus(SyncStatus.DONE, "");
-                    return;
-                }
-
-                setStatus(SyncStatus.COMPRESSING, worldName);
-                Path tempZip = getTempDir().resolve(worldName + ".zip");
-                try {
-                    WorldSyncTask.compressWorld(worldFolder, tempZip);
-
-                    long zipSize = Files.size(tempZip);
-                    if (zipSize > 50L * 1024 * 1024 * 1024) {
-                        throw new IOException("Compressed world exceeds maximum supported size (50 GB): " + zipSize + " bytes");
-                    }
-
-                    setStatus(SyncStatus.UPLOADING, worldName);
-                    WorldMetadata uploadedMeta;
-                    try {
-                        uploadedMeta = cloud.upload(worldName, tempZip);
-                    } catch (IOException uploadEx) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Upload failed/timed out. Verifying if file reached cloud: {}", uploadEx.getMessage());
-                        try {
-                            WorldMetadata remoteMeta = cloud.getWorldMetadata(worldName);
-                            if (remoteMeta != null && remoteMeta.sizeBytes() == zipSize) {
-                                SimpleSync.LOGGER.info("[SimpleSync] Verified that the remote file size matches the local ZIP. Considering upload successful.");
-                                uploadedMeta = remoteMeta;
-                            } else {
-                                throw uploadEx;
-                            }
-                        } catch (Exception verifyEx) {
-                            SimpleSync.LOGGER.error("[SimpleSync] Failed to verify remote file status", verifyEx);
-                            throw uploadEx;
-                        }
-                    }
-
-                    long newTimestamp = uploadedMeta != null && uploadedMeta.lastModified() > 0 ? uploadedMeta.lastModified() : System.currentTimeMillis();
-                    config.setLastSyncTimestamp(worldName, newTimestamp);
-                    config.setLastLocalSize(worldName, stats.size());
-                    config.setLastLocalMtime(worldName, stats.latestModifiedTime());
-                    config.save();
-
-                    setStatus(SyncStatus.DONE, "");
-                    SimpleSync.LOGGER.info("[SimpleSync] Successfully uploaded world: {}", worldName);
-                } finally {
-                    deleteQuietly(tempZip);
-                }
-
+                uploadWorldSync(worldName);
             } catch (Exception e) {
                 SimpleSync.LOGGER.error("[SimpleSync] Upload failed for world: {}", worldName, e);
                 setStatus(SyncStatus.ERROR, e.getMessage() != null ? e.getMessage() : "Unknown error");
