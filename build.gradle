@@ -107,7 +107,6 @@ shadowJar {
 
     // Exclude unused compression formats and archivers from commons-compress
     exclude '**/archivers/sevenz/**'
-    exclude '**/archivers/zip/**'
     exclude '**/archivers/cpio/**'
     exclude '**/archivers/dump/**'
     exclude '**/archivers/ar/**'
