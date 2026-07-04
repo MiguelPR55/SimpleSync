@@ -5,10 +5,9 @@ out/
 gradle-app.setting
 !gradle-wrapper.jar
 
-# Local JDK & temporary mappings
+# Local JDK
 .jdk21/
 .jdk25/
-gradle/identity-mappings-*.jar
 
 # Log files & OS files
 *.log

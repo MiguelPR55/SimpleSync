@@ -178,8 +178,8 @@ public class SyncConfigScreen extends Screen {
             } else {
                 authError = null;
             }
-            if (this.minecraft.screen instanceof dev.simplesync.ui.DeviceAuthScreen) {
-                this.minecraft.setScreen(this);
+            if (this.minecraft.gui.screen() instanceof dev.simplesync.ui.DeviceAuthScreen) {
+                this.minecraft.gui.setScreen(this);
             }
             this.rebuildWidgets();
         });
@@ -265,7 +265,7 @@ public class SyncConfigScreen extends Screen {
     @Override
     public void onClose() {
         if (this.minecraft != null) {
-            this.minecraft.setScreen(this.parent);
+            this.minecraft.gui.setScreen(this.parent);
         }
     }
 }

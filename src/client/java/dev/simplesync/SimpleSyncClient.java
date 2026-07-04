@@ -26,7 +26,7 @@ public class SimpleSyncClient implements ClientModInitializer {
 
         CloudSyncManager.getInstance().setConflictCallback((worldName, localTs, cloudTs, onUseCloud, onKeepLocal) -> {
             Minecraft.getInstance().execute(() -> {
-                Minecraft.getInstance().setScreen(new dev.simplesync.ui.SyncConflictScreen(
+                Minecraft.getInstance().gui.setScreen(new dev.simplesync.ui.SyncConflictScreen(
                         worldName, localTs, cloudTs, onUseCloud, onKeepLocal
                 ));
             });
@@ -34,7 +34,7 @@ public class SimpleSyncClient implements ClientModInitializer {
 
         CloudSyncManager.getInstance().setConflictCancelCallback(() -> {
             Minecraft.getInstance().execute(() -> {
-                if (Minecraft.getInstance().screen instanceof dev.simplesync.ui.SyncConflictScreen screen) {
+                if (Minecraft.getInstance().gui.screen() instanceof dev.simplesync.ui.SyncConflictScreen screen) {
                     screen.onClose();
                 }
             });
@@ -42,8 +42,8 @@ public class SimpleSyncClient implements ClientModInitializer {
 
         CloudSyncManager.getInstance().setAuthPromptCallback((userCode, verificationUrl, expiresInSeconds, onCancel) -> {
             Minecraft.getInstance().execute(() -> {
-                net.minecraft.client.gui.screens.Screen current = Minecraft.getInstance().screen;
-                Minecraft.getInstance().setScreen(new dev.simplesync.ui.DeviceAuthScreen(
+                net.minecraft.client.gui.screens.Screen current = Minecraft.getInstance().gui.screen();
+                Minecraft.getInstance().gui.setScreen(new dev.simplesync.ui.DeviceAuthScreen(
                         current, userCode, verificationUrl, expiresInSeconds, onCancel
                 ));
             });

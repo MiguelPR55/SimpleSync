@@ -114,7 +114,7 @@ public class DeviceAuthScreen extends Screen {
             onCancel.run();
         }
         if (this.minecraft != null) {
-            this.minecraft.setScreen(parent);
+            this.minecraft.gui.setScreen(parent);
         }
     }
 }
