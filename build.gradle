@@ -53,8 +53,12 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    implementation 'org.apache.commons:commons-compress:1.28.0'
-    shadowBundle 'org.apache.commons:commons-compress:1.28.0'
+    implementation('org.apache.commons:commons-compress:1.28.0') {
+        transitive = false
+    }
+    shadowBundle('org.apache.commons:commons-compress:1.28.0') {
+        transitive = false
+    }
 
     implementation 'com.github.luben:zstd-jni:1.5.6-8'
     shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
@@ -85,6 +89,44 @@ shadowJar {
     exclude 'META-INF/NOTICE*'
     exclude 'META-INF/DEPENDENCIES'
     exclude 'META-INF/maven/**'
+
+    // Exclude native zstd libraries for unused or exotic operating systems and CPU architectures
+    exclude 'aix/**'
+    exclude 'freebsd/**'
+    exclude 'linux/i386/**'
+    exclude 'linux/mips64/**'
+    exclude 'linux/ppc64/**'
+    exclude 'linux/ppc64le/**'
+    exclude 'linux/riscv64/**'
+    exclude 'linux/loongarch64/**'
+    exclude 'linux/s390x/**'
+    exclude 'linux/arm/**'
+    exclude 'win/x86/**'
+    exclude 'win/aarch64/**'
+    exclude 'darwin/**'
+
+    // Exclude unused compression formats and archivers from commons-compress
+    exclude '**/archivers/sevenz/**'
+    exclude '**/archivers/zip/**'
+    exclude '**/archivers/cpio/**'
+    exclude '**/archivers/dump/**'
+    exclude '**/archivers/ar/**'
+    exclude '**/archivers/arj/**'
+    exclude '**/archivers/jar/**'
+    exclude '**/compressors/bzip2/**'
+    exclude '**/compressors/pack200/**'
+    exclude '**/compressors/lzma/**'
+    exclude '**/compressors/xz/**'
+    exclude '**/compressors/snappy/**'
+    exclude '**/compressors/lz4/**'
+    exclude '**/compressors/brotli/**'
+    exclude '**/compressors/deflate/**'
+    exclude '**/compressors/gzip/**'
+    exclude '**/compressors/z/**'
+    exclude '**/compressors/lz77support/**'
+    exclude '**/harmony/**'
+    exclude '**/changes/**'
+    exclude '**/parallel/**'
 }
 
 remapJar {
