@@ -191,16 +191,17 @@ public class SyncConfigScreen extends Screen {
             extractor.centeredText(this.font,
                     Component.translatable("simplesync.tutorial.title"), centerX, 20, 0xFFFFFFFF);
 
-            int startY = 40;
-            int stepGap = 15;
+            int startY = 38;
+            int stepGap = 13;
 
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step1"), centerX, startY, 0xFFDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap, 0xFFDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2, 0xFFDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3b"), centerX, startY + stepGap * 3, 0xFFFFAA00);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 4, 0xFFDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 5, 0xFFDDDDDD);
-            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 6, 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step1"), centerX, startY,                 0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step2"), centerX, startY + stepGap,       0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step3"), centerX, startY + stepGap * 2,   0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step4"), centerX, startY + stepGap * 3,   0xFFFFAA00);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step5"), centerX, startY + stepGap * 4,   0xFF55FF55);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step6"), centerX, startY + stepGap * 5,   0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step7"), centerX, startY + stepGap * 6,   0xFFDDDDDD);
+            extractor.centeredText(this.font, Component.translatable("simplesync.tutorial.step8"), centerX, startY + stepGap * 7,   0xFFDDDDDD);
             return;
         }
 
@@ -266,33 +267,45 @@ public class SyncConfigScreen extends Screen {
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
         if (showingTutorial && event.button() == 0) {
             int centerX = this.width / 2;
-            int startY = 40;
-            int stepGap = 15;
+            int startY = 38;
+            int stepGap = 13;
 
-            // Step 1: console.cloud.google.com
+            // Step 1: console.cloud.google.com (index 0)
             int step1Width = this.font.width(Component.translatable("simplesync.tutorial.step1"));
-            if (event.y() >= startY - 4 && event.y() <= startY + 14 && event.x() >= centerX - step1Width / 2 && event.x() <= centerX + step1Width / 2) {
+            if (event.y() >= startY - 4 && event.y() <= startY + 13
+                    && event.x() >= centerX - step1Width / 2 && event.x() <= centerX + step1Width / 2) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/");
                 return true;
             }
 
-            // Step 2: Google Drive API Library
+            // Step 2: Google Drive API Library (index 1)
             int step2Width = this.font.width(Component.translatable("simplesync.tutorial.step2"));
-            if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 14 && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
+            if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 13
+                    && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
                 return true;
             }
 
-            // Step 3b: OAuth Consent Screen Test Users
-            int step3bWidth = this.font.width(Component.translatable("simplesync.tutorial.step3b"));
-            if (event.y() >= (startY + stepGap * 3) - 4 && event.y() <= (startY + stepGap * 3) + 14 && event.x() >= centerX - step3bWidth / 2 && event.x() <= centerX + step3bWidth / 2) {
+            // Step 4: OAuth Consent Screen — Test Users (index 3)
+            int step4Width = this.font.width(Component.translatable("simplesync.tutorial.step4"));
+            if (event.y() >= (startY + stepGap * 3) - 4 && event.y() <= (startY + stepGap * 3) + 13
+                    && event.x() >= centerX - step4Width / 2 && event.x() <= centerX + step4Width / 2) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/credentials/consent");
                 return true;
             }
 
-            // Step 6: Local config/simplesync/ Folder
-            int step6Width = this.font.width(Component.translatable("simplesync.tutorial.step6"));
-            if (event.y() >= (startY + stepGap * 6) - 4 && event.y() <= (startY + stepGap * 6) + 14 && event.x() >= centerX - step6Width / 2 && event.x() <= centerX + step6Width / 2) {
+            // Step 5: Publish App (index 4)
+            int step5Width = this.font.width(Component.translatable("simplesync.tutorial.step5"));
+            if (event.y() >= (startY + stepGap * 4) - 4 && event.y() <= (startY + stepGap * 4) + 13
+                    && event.x() >= centerX - step5Width / 2 && event.x() <= centerX + step5Width / 2) {
+                confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/credentials/consent");
+                return true;
+            }
+
+            // Step 8: config/simplesync/ folder (index 7)
+            int step8Width = this.font.width(Component.translatable("simplesync.tutorial.step8"));
+            if (event.y() >= (startY + stepGap * 7) - 4 && event.y() <= (startY + stepGap * 7) + 13
+                    && event.x() >= centerX - step8Width / 2 && event.x() <= centerX + step8Width / 2) {
                 dev.simplesync.SimpleSync.openFileRobust(dev.simplesync.config.SyncConfig.getConfigDir().toFile());
                 return true;
             }

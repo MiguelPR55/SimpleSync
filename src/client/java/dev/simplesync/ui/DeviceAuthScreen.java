@@ -22,6 +22,9 @@ public class DeviceAuthScreen extends Screen {
     private final Runnable onCancel;
     private final AtomicBoolean resolved = new AtomicBoolean(false);
 
+    // Cached Y coordinate of the URL text so mouseClicked can hit-test it
+    private int urlTextY = 0;
+
     public DeviceAuthScreen(Screen parent, String userCode, String verificationUrl, long expiresInSeconds, Runnable onCancel) {
         super(Component.translatable("simplesync.auth.title"));
         this.parent = parent;
@@ -87,9 +90,10 @@ public class DeviceAuthScreen extends Screen {
                 Component.translatable("simplesync.auth.url_instruction"), centerX, y, 0xFFDDDDDD);
         y += 15;
 
-        // Verification URL (in cyan)
+        // Verification URL — cyan + underline to signal it is clickable
+        urlTextY = y;
         extractor.centeredText(this.font,
-                Component.literal(verificationUrl), centerX, y, 0xFF55FFFF);
+                Component.literal("§n" + verificationUrl), centerX, y, 0xFF55FFFF);
         y += 22;
 
         // Code Instruction
@@ -106,6 +110,24 @@ public class DeviceAuthScreen extends Screen {
         long mins = Math.max(1, expiresInSeconds / 60);
         extractor.centeredText(this.font,
                 Component.translatable("simplesync.auth.expires", mins), centerX, y, 0xFFAAAAAA);
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
+        // Allow clicking directly on the URL text as a hyperlink
+        if (event.button() == 0 && urlTextY > 0) {
+            int centerX = this.width / 2;
+            // §n (underline) doesn't affect width measurement, so use the raw URL for sizing
+            int urlWidth = this.font.width(verificationUrl);
+            int x1 = centerX - urlWidth / 2;
+            int x2 = centerX + urlWidth / 2;
+            if (event.x() >= x1 && event.x() <= x2
+                    && event.y() >= urlTextY - 2 && event.y() <= urlTextY + 12) {
+                SyncConfigScreen.confirmAndOpenUrl(this, verificationUrl);
+                return true;
+            }
+        }
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
