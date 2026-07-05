@@ -41,7 +41,7 @@ public class GoogleDriveProvider implements CloudProvider {
     private static final Pattern DRIVE_FILE_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,256}$");
 
     private final Path credentialsDir;
-    private final Map<String, String> fileIdCache = new ConcurrentHashMap<>();
+    private final Map<String, java.util.Optional<String>> fileIdCache = new ConcurrentHashMap<>();
     private final HttpClient httpClient;
     private volatile String simpleSyncFolderId;
     private final AtomicBoolean isAuthenticating = new AtomicBoolean(false);
@@ -180,7 +180,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
         JsonObject uploadedFile = JsonParser.parseString(putResponse.body()).getAsJsonObject();
         String fileId = uploadedFile.get("id").getAsString();
-        fileIdCache.put(fileName, fileId);
+        fileIdCache.put(fileName, java.util.Optional.ofNullable(fileId));
 
         // Delete obsolete other compression formats of this world
         try {
@@ -395,7 +395,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 
                 String fileId = file.has("id") ? file.get("id").getAsString() : null;
                 if (fileId != null) {
-                    fileIdCache.put(fileName, fileId);
+                    fileIdCache.put(fileName, java.util.Optional.of(fileId));
                 }
                 if (seenWorldNames.contains(worldName)) {
                     continue; 
@@ -437,11 +437,11 @@ public class GoogleDriveProvider implements CloudProvider {
             
             if (metaZip != null && metaTarZst != null) {
                 if (metaZip.lastModified() > metaTarZst.lastModified()) {
-                    fileIdCache.put(worldName + ".zip", ids.zipId());
+                    fileIdCache.put(worldName + ".zip", java.util.Optional.ofNullable(ids.zipId()));
                     fileIdCache.remove(worldName + ".tar.zst");
                     return metaZip;
                 } else {
-                    fileIdCache.put(worldName + ".tar.zst", ids.tarZstId());
+                    fileIdCache.put(worldName + ".tar.zst", java.util.Optional.ofNullable(ids.tarZstId()));
                     fileIdCache.remove(worldName + ".zip");
                     return metaTarZst;
                 }
@@ -623,7 +623,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         SyncConfig config = SyncConfig.load();
-        String savedFolderId = config.getSimpleSyncFolderId();
+        String savedFolderId = config.simpleSyncFolderId;
         String accessToken = ensureValidAccessToken();
 
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
@@ -649,7 +649,7 @@ public class GoogleDriveProvider implements CloudProvider {
             } else {
                 SimpleSync.LOGGER.warn("[SimpleSync] Ignoring unsafe saved Google Drive folder id");
             }
-            config.setSimpleSyncFolderId(null);
+            config.simpleSyncFolderId = null;
             config.save();
         }
 
@@ -669,7 +669,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 if (files != null && files.size() > 0) {
                     simpleSyncFolderId = files.get(0).getAsJsonObject().get("id").getAsString();
                     SimpleSync.LOGGER.info("[SimpleSync] Found SimpleSync folder: {}", simpleSyncFolderId);
-                    config.setSimpleSyncFolderId(simpleSyncFolderId);
+                    config.simpleSyncFolderId = simpleSyncFolderId;
                     config.save();
                     return;
                 }
@@ -694,7 +694,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 JsonObject folder = JsonParser.parseString(createResp.body()).getAsJsonObject();
                 simpleSyncFolderId = folder.get("id").getAsString();
                 SimpleSync.LOGGER.info("[SimpleSync] Created SimpleSync folder: {}", simpleSyncFolderId);
-                config.setSimpleSyncFolderId(simpleSyncFolderId);
+                config.simpleSyncFolderId = simpleSyncFolderId;
                 config.save();
             } else {
                 throw new IOException("Folder creation failed: HTTP " + createResp.statusCode() + " - " + createResp.body());
@@ -706,8 +706,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private synchronized String findFileId(String fileName) throws IOException {
         if (fileIdCache.containsKey(fileName)) {
-            String cached = fileIdCache.get(fileName);
-            return "__NOT_FOUND__".equals(cached) ? null : cached;
+            return fileIdCache.get(fileName).orElse(null);
         }
 
         ensureSimpleSyncFolder();
@@ -728,14 +727,14 @@ public class GoogleDriveProvider implements CloudProvider {
                 JsonArray files = body.getAsJsonArray("files");
                 if (files != null && files.size() > 0) {
                     String id = files.get(0).getAsJsonObject().get("id").getAsString();
-                    fileIdCache.put(fileName, id);
+                    fileIdCache.put(fileName, java.util.Optional.of(id));
                     return id;
                 }
             }
         } catch (Exception e) {
             SimpleSync.LOGGER.warn("[SimpleSync] Failed to find file ID for {}: {}", fileName, e.getMessage());
         }
-        fileIdCache.put(fileName, "__NOT_FOUND__");
+        fileIdCache.put(fileName, java.util.Optional.empty());
         return null;
     }
 

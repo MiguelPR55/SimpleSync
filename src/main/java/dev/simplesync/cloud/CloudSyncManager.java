@@ -7,6 +7,7 @@ import dev.simplesync.sync.StatusSnapshot;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
+import dev.simplesync.util.RetryUtil.RunnableWithException;
 
 
 import java.io.IOException;
@@ -102,17 +103,12 @@ public class CloudSyncManager {
             if (cloud.isAuthenticating()) {
                 throw new IOException("Authentication pending: please complete device authorization in browser.");
             }
-            CompletableFuture.runAsync(() -> {
-                try {
-                    cloud.authenticate();
-                    if (onAuthenticated != null) {
-                        onAuthenticated.run();
-                    }
-                } catch (Exception e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Background authentication failed", e);
-                    setStatus(SyncStatus.ERROR, e.getMessage() != null ? e.getMessage() : "Authentication failed");
+            runAsyncSafely("Background authentication failed", "Authentication failed", () -> {
+                cloud.authenticate();
+                if (onAuthenticated != null) {
+                    onAuthenticated.run();
                 }
-            }, executor);
+            });
             throw new IOException("Authentication required: please complete device authorization in browser.");
         }
     }
@@ -122,9 +118,8 @@ public class CloudSyncManager {
      * Called when the game starts (from TitleScreen).
      */
     public CompletableFuture<Void> syncAllWorldsFromCloud() {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                CloudProvider cloud = getProvider();
+        return runAsyncSafely("Sync from cloud failed", "Unknown error", () -> {
+            CloudProvider cloud = getProvider();
                 ensureAuthenticatedOrThrow(cloud, this::syncAllWorldsFromCloud);
 
                 setStatus(SyncStatus.CHECKING, "");
@@ -249,19 +244,12 @@ public class CloudSyncManager {
                     }
                 }
 
-                config.save();
-
                 if (downloadCount > 0) {
                     setStatus(SyncStatus.DONE, "");
                 } else {
                     clearStatus();
                 }
-
-            } catch (Throwable t) {
-                SimpleSync.LOGGER.error("[SimpleSync] Sync from cloud failed", t);
-                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
-            }
-        }, executor);
+        });
     }
 
     /**
@@ -337,18 +325,10 @@ public class CloudSyncManager {
         }
     }
 
-    /**
-     * Uploads a specific world to the cloud asynchronously on the executor thread.
-     */
     public CompletableFuture<Void> uploadWorldAsync(String worldName) {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                uploadWorldSync(worldName);
-            } catch (Throwable t) {
-                SimpleSync.LOGGER.error("[SimpleSync] Upload failed for world: {}", worldName, t);
-                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
-            }
-        }, executor);
+        return runAsyncSafely("Upload failed for world: " + worldName, "Unknown error", () -> {
+            uploadWorldSync(worldName);
+        });
     }
 
     /**
@@ -382,53 +362,45 @@ public class CloudSyncManager {
         }, executor);
     }
 
-    /**
-     * Restores/downloads a specific world from the cloud asynchronously on the executor thread.
-     */
     public CompletableFuture<Void> restoreWorldFromCloudAsync(String worldName, Runnable onComplete) {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
-                    throw new IllegalArgumentException("Invalid world name: " + worldName);
-                }
-                CloudProvider cloud = getProvider();
-                ensureAuthenticatedOrThrow(cloud, () -> restoreWorldFromCloudAsync(worldName, onComplete));
-
-                Path savesDir = getSavesDirectory();
-                Path worldFolder = savesDir.resolve(worldName).normalize();
-                if (!worldFolder.startsWith(savesDir.normalize())) {
-                    throw new SecurityException("Path traversal detected: " + worldName);
-                }
-
-                WorldMetadata meta = cloud.getWorldMetadata(worldName);
-                if (meta == null) {
-                    throw new IOException("Remote world not found on Google Drive: " + worldName);
-                }
-
-                setStatus(SyncStatus.DOWNLOADING, worldName);
-                Path tempArchive = getTempDir().resolve(worldName + "-restore.tar.zst");
-                try {
-                    cloud.download(worldName, tempArchive);
-                    setStatus(SyncStatus.EXTRACTING, worldName);
-                    WorldSyncTask.extractWorld(tempArchive, worldFolder);
-
-                    SyncConfig config = SyncConfig.load();
-                    updateWorldTracking(config, worldName, worldFolder, meta.lastModified());
-                    config.save();
-
-                    setStatus(SyncStatus.DONE, "");
-                    SimpleSync.LOGGER.info("[SimpleSync] Successfully restored world from cloud: {}", worldName);
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                } finally {
-                    deleteQuietly(tempArchive);
-                }
-            } catch (Throwable t) {
-                SimpleSync.LOGGER.error("[SimpleSync] Failed to restore world: {}", worldName, t);
-                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Unknown error");
+        return runAsyncSafely("Failed to restore world: " + worldName, "Unknown error", () -> {
+            if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+                throw new IllegalArgumentException("Invalid world name: " + worldName);
             }
-        }, executor);
+            CloudProvider cloud = getProvider();
+            ensureAuthenticatedOrThrow(cloud, () -> restoreWorldFromCloudAsync(worldName, onComplete));
+
+            Path savesDir = getSavesDirectory();
+            Path worldFolder = savesDir.resolve(worldName).normalize();
+            if (!worldFolder.startsWith(savesDir.normalize())) {
+                throw new SecurityException("Path traversal detected: " + worldName);
+            }
+
+            WorldMetadata meta = cloud.getWorldMetadata(worldName);
+            if (meta == null) {
+                throw new IOException("Remote world not found on Google Drive: " + worldName);
+            }
+
+            setStatus(SyncStatus.DOWNLOADING, worldName);
+            Path tempArchive = getTempDir().resolve(worldName + "-restore.tar.zst");
+            try {
+                cloud.download(worldName, tempArchive);
+                setStatus(SyncStatus.EXTRACTING, worldName);
+                WorldSyncTask.extractWorld(tempArchive, worldFolder);
+
+                SyncConfig config = SyncConfig.load();
+                updateWorldTracking(config, worldName, worldFolder, meta.lastModified());
+                config.save();
+
+                setStatus(SyncStatus.DONE, "");
+                SimpleSync.LOGGER.info("[SimpleSync] Successfully restored world from cloud: {}", worldName);
+                if (onComplete != null) {
+                    onComplete.run();
+                }
+            } finally {
+                deleteQuietly(tempArchive);
+            }
+        });
     }
 
     // ─── Status Management ──────────────────────────────────────────────────
@@ -494,6 +466,17 @@ public class CloudSyncManager {
         try {
             Files.deleteIfExists(path);
         } catch (IOException ignored) {}
+    }
+
+    private CompletableFuture<Void> runAsyncSafely(String errorLogPrefix, String defaultErrorMessage, RunnableWithException task) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                task.run();
+            } catch (Throwable t) {
+                SimpleSync.LOGGER.error("[SimpleSync] {}", errorLogPrefix, t);
+                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : defaultErrorMessage);
+            }
+        }, executor);
     }
 
     /**

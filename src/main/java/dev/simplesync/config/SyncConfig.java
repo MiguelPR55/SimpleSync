@@ -194,11 +194,4 @@ public class SyncConfig {
         worldTracking.remove(worldName);
     }
 
-    public String getSimpleSyncFolderId() {
-        return simpleSyncFolderId;
-    }
-
-    public void setSimpleSyncFolderId(String folderId) {
-        this.simpleSyncFolderId = folderId;
-    }
 }
