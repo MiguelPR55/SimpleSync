@@ -432,24 +432,8 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         if (ids.tarZstId() != null && ids.zipId() != null) {
-            WorldMetadata metaTarZst = getFileMetadataById(ids.tarZstId(), worldName);
-            WorldMetadata metaZip = getFileMetadataById(ids.zipId(), worldName);
-            
-            if (metaZip != null && metaTarZst != null) {
-                if (metaZip.lastModified() > metaTarZst.lastModified()) {
-                    fileIdCache.put(worldName + ".zip", java.util.Optional.ofNullable(ids.zipId()));
-                    fileIdCache.remove(worldName + ".tar.zst");
-                    return metaZip;
-                } else {
-                    fileIdCache.put(worldName + ".tar.zst", java.util.Optional.ofNullable(ids.tarZstId()));
-                    fileIdCache.remove(worldName + ".zip");
-                    return metaTarZst;
-                }
-            } else if (metaZip != null) {
-                return metaZip;
-            } else {
-                return metaTarZst;
-            }
+            SimpleSync.LOGGER.warn("[SimpleSync] Inconsistent state: both .tar.zst and legacy .zip exist for world '{}' in cloud. Defaulting to .tar.zst.", worldName);
+            return getFileMetadataById(ids.tarZstId(), worldName);
         } else {
             String targetFileId = (ids.tarZstId() != null) ? ids.tarZstId() : ids.zipId();
             return getFileMetadataById(targetFileId, worldName);

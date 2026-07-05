@@ -238,36 +238,12 @@ public class SyncConfigScreen extends Screen {
         // Draw authentication errors if any (split into multiple centered lines to avoid overlap)
         if (authError != null) {
             Component errText = Component.translatable("simplesync.config.auth_failed", authError);
-            java.util.List<String> lines = wrapText(errText.getString(), 300);
             int currentY = centerY + 100;
-            for (String line : lines) {
-                extractor.centeredText(this.font, Component.literal(line), centerX, currentY, 0xFFE57373);
+            for (net.minecraft.util.FormattedCharSequence line : this.font.split(errText, 300)) {
+                extractor.centeredText(this.font, line, centerX, currentY, 0xFFE57373);
                 currentY += 9;
             }
         }
-    }
-
-    private java.util.List<String> wrapText(String text, int maxWidth) {
-        java.util.List<String> lines = new java.util.ArrayList<>();
-        for (String paragraph : text.split("\n")) {
-            String[] words = paragraph.split(" ");
-            StringBuilder currentLine = new StringBuilder();
-            for (String word : words) {
-                String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
-                if (this.font.width(testLine) <= maxWidth) {
-                    currentLine.append(currentLine.length() == 0 ? "" : " ").append(word);
-                } else {
-                    if (currentLine.length() > 0) {
-                        lines.add(currentLine.toString());
-                    }
-                    currentLine = new StringBuilder(word);
-                }
-            }
-            if (currentLine.length() > 0) {
-                lines.add(currentLine.toString());
-            }
-        }
-        return lines;
     }
 
     @Override

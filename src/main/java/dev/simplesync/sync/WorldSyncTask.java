@@ -100,7 +100,7 @@ public class WorldSyncTask {
         SimpleSync.LOGGER.info("[SimpleSync] Compressing world: {} -> {}", worldFolder, outputArchive);
 
         try {
-            if (outputArchive.getFileName().toString().endsWith(".zip")) {
+            if (detectFormat(outputArchive) == ArchiveFormat.ZIP) {
                 compressWorldZip(worldFolder, outputArchive);
             } else {
                 compressWorldTarZst(worldFolder, outputArchive);
@@ -245,20 +245,7 @@ public class WorldSyncTask {
 
         boolean rollbackFailed = false;
         try {
-            boolean isZip = false;
-            try (InputStream fis = Files.newInputStream(archiveFile)) {
-                byte[] magic = new byte[4];
-                int read = fis.read(magic);
-                if (read >= 2 && magic[0] == (byte) 0x50 && magic[1] == (byte) 0x4B) {
-                    isZip = true;
-                } else if (read >= 4 && magic[0] == (byte) 0x28 && magic[1] == (byte) 0xB5 && magic[2] == (byte) 0x2F && magic[3] == (byte) 0xFD) {
-                    isZip = false;
-                } else {
-                    isZip = archiveFile.getFileName().toString().endsWith(".zip");
-                }
-            }
-
-            if (isZip) {
+            if (detectFormat(archiveFile) == ArchiveFormat.ZIP) {
                 extractZipEntries(archiveFile, stagingDir);
             } else {
                 extractTarZstEntries(archiveFile, stagingDir);
@@ -610,5 +597,24 @@ public class WorldSyncTask {
         }
 
         return stats.size() != lastSize || stats.latestModifiedTime() != lastMtime;
+    }
+
+    public enum ArchiveFormat {
+        ZIP,
+        TAR_ZST
+    }
+
+    public static ArchiveFormat detectFormat(Path path) {
+        try (java.io.InputStream fis = Files.newInputStream(path)) {
+            byte[] magic = new byte[4];
+            int read = fis.read(magic);
+            if (read >= 2 && magic[0] == (byte) 0x50 && magic[1] == (byte) 0x4B) {
+                return ArchiveFormat.ZIP;
+            }
+            if (read >= 4 && magic[0] == (byte) 0x28 && magic[1] == (byte) 0xB5 && magic[2] == (byte) 0x2F && magic[3] == (byte) 0xFD) {
+                return ArchiveFormat.TAR_ZST;
+            }
+        } catch (IOException ignored) {}
+        return path.getFileName().toString().endsWith(".zip") ? ArchiveFormat.ZIP : ArchiveFormat.TAR_ZST;
     }
 }
