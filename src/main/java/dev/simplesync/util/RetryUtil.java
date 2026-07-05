@@ -9,9 +9,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 public class RetryUtil {
+
+    public static String formEncode(Map<String, String> params) {
+        return params.entrySet().stream()
+                .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
+                .map(e -> urlEncode(e.getKey()) + "=" + urlEncode(e.getValue()))
+                .collect(Collectors.joining("&"));
+    }
 
     public static <T> T retry(int maxAttempts, String operationName, Callable<T> action) throws IOException {
         IOException lastError = null;

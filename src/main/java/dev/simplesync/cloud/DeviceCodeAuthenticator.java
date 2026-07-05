@@ -43,7 +43,10 @@ public class DeviceCodeAuthenticator {
     ) throws IOException, InterruptedException {
         SimpleSync.LOGGER.info("[SimpleSync] Initiating Google Device Authorization Grant...");
 
-        String deviceCodeBody = "client_id=" + dev.simplesync.util.RetryUtil.urlEncode(clientId) + "&scope=" + dev.simplesync.util.RetryUtil.urlEncode(scope);
+        String deviceCodeBody = dev.simplesync.util.RetryUtil.formEncode(java.util.Map.of(
+                "client_id", clientId,
+                "scope", scope
+        ));
         JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
         
         if (deviceResp == null || !deviceResp.has("device_code") || !deviceResp.has("user_code") || !deviceResp.has("expires_in")) {
@@ -75,26 +78,28 @@ public class DeviceCodeAuthenticator {
 
         while (System.currentTimeMillis() < deadline) {
             if (cancelled.get() || Thread.currentThread().isInterrupted()) {
-                throw new IOException("Authentication cancelled by user");
+                throw new AuthCancelledException("Authentication cancelled by user");
             }
 
             try {
                 Thread.sleep(intervalSeconds * 1000L);
             } catch (InterruptedException e) {
-                if (cancelled.get()) {
-                    throw new IOException("Authentication cancelled by user");
-                }
-                throw e;
+                Thread.currentThread().interrupt();
+                throw new AuthCancelledException("Authentication cancelled by user");
             }
 
             if (cancelled.get()) {
-                throw new IOException("Authentication cancelled by user");
+                throw new AuthCancelledException("Authentication cancelled by user");
             }
 
-            String tokenBody = "client_id=" + dev.simplesync.util.RetryUtil.urlEncode(clientId)
-                    + (clientSecret != null && !clientSecret.isEmpty() ? "&client_secret=" + dev.simplesync.util.RetryUtil.urlEncode(clientSecret) : "")
-                    + "&device_code=" + dev.simplesync.util.RetryUtil.urlEncode(deviceCode)
-                    + "&grant_type=" + dev.simplesync.util.RetryUtil.urlEncode("urn:ietf:params:oauth:grant-type:device_code");
+            java.util.Map<String, String> params = new java.util.HashMap<>();
+            params.put("client_id", clientId);
+            if (clientSecret != null && !clientSecret.isEmpty()) {
+                params.put("client_secret", clientSecret);
+            }
+            params.put("device_code", deviceCode);
+            params.put("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
+            String tokenBody = dev.simplesync.util.RetryUtil.formEncode(params);
 
             HttpResponse<String> raw;
             try {
@@ -141,4 +146,9 @@ public class DeviceCodeAuthenticator {
         return JsonParser.parseString(resp.body()).getAsJsonObject();
     }
 
+    public static class AuthCancelledException extends IOException {
+        public AuthCancelledException(String message) {
+            super(message);
+        }
+    }
 }

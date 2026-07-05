@@ -141,13 +141,11 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         String method = isUpdate ? "PATCH" : "POST";
-        HttpRequest.Builder initReqBuilder = HttpRequest.newBuilder(URI.create(initUrl))
+        HttpRequest.Builder initReqBuilder = authedRequest(accessToken, initUrl, Duration.ofSeconds(30))
                 .method(method, HttpRequest.BodyPublishers.ofString(metadata.toString()))
-                .header("Authorization", "Bearer " + accessToken)
                 .header("Content-Type", "application/json; charset=UTF-8")
                 .header("X-Upload-Content-Type", mimeType)
-                .header("X-Upload-Content-Length", String.valueOf(fileSize))
-                .timeout(Duration.ofSeconds(30));
+                .header("X-Upload-Content-Length", String.valueOf(fileSize));
 
         HttpResponse<String> initResponse = sendWithRetry(initReqBuilder, 3);
 
@@ -313,10 +311,8 @@ public class GoogleDriveProvider implements CloudProvider {
         Files.deleteIfExists(outputArchive);
 
         String accessToken = ensureValidAccessToken();
-        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + targetFileId + "?alt=media"))
-                .GET()
-                .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofMinutes(15));
+        HttpRequest.Builder reqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + targetFileId + "?alt=media", Duration.ofMinutes(15))
+                .GET();
 
         try {
             HttpResponse<InputStream> response = sendWithRetry(reqBuilder, HttpResponse.BodyHandlers.ofInputStream(), 3);
@@ -361,10 +357,8 @@ public class GoogleDriveProvider implements CloudProvider {
                     + "&orderBy=modifiedTime%20desc"
                     + (pageToken != null ? "&pageToken=" + RetryUtil.urlEncode(pageToken) : "");
 
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
-                    .GET()
-                    .header("Authorization", "Bearer " + accessToken)
-                    .timeout(Duration.ofSeconds(30));
+            HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30))
+                    .GET();
 
             HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
             if (response.statusCode() != 200) {
@@ -442,10 +436,8 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private WorldMetadata getFileMetadataById(String fileId, String worldName) throws IOException {
         String accessToken = ensureValidAccessToken();
-        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=id,name,modifiedTime,size"))
-                .GET()
-                .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30));
+        HttpRequest.Builder reqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=id,name,modifiedTime,size", Duration.ofSeconds(30))
+                .GET();
         
         HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
         if (response.statusCode() == 200) {
@@ -483,10 +475,8 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     private void deleteFileById(String accessToken, String fileId) throws IOException {
-        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + fileId))
-                .DELETE()
-                .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30));
+        HttpRequest.Builder reqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + fileId, Duration.ofSeconds(30))
+                .DELETE();
         HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
         if (response.statusCode() != 204 && response.statusCode() != 404) {
             throw new IOException("Failed to delete file " + fileId + ": HTTP " + response.statusCode() + " - " + response.body());
@@ -572,10 +562,14 @@ public class GoogleDriveProvider implements CloudProvider {
             }
             ClientSecrets.Details details = secrets.getDetails();
             
-            String refreshBody = "client_id=" + RetryUtil.urlEncode(details.client_id)
-                    + (details.client_secret != null && !details.client_secret.isEmpty() ? "&client_secret=" + RetryUtil.urlEncode(details.client_secret) : "")
-                    + "&refresh_token=" + RetryUtil.urlEncode(tokenData.refreshToken)
-                    + "&grant_type=refresh_token";
+            java.util.Map<String, String> params = new java.util.HashMap<>();
+            params.put("client_id", details.client_id);
+            if (details.client_secret != null && !details.client_secret.isEmpty()) {
+                params.put("client_secret", details.client_secret);
+            }
+            params.put("refresh_token", tokenData.refreshToken);
+            params.put("grant_type", "refresh_token");
+            String refreshBody = RetryUtil.formEncode(params);
             
             try {
                 HttpResponse<String> response = RetryUtil.postFormWithRetry(httpClient, "https://oauth2.googleapis.com/token", refreshBody);
@@ -613,10 +607,8 @@ public class GoogleDriveProvider implements CloudProvider {
         if (savedFolderId != null && !savedFolderId.isEmpty()) {
             if (isSafeDriveFileId(savedFolderId)) {
                 try {
-                    HttpRequest.Builder checkReqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files/" + savedFolderId + "?fields=id,trashed"))
-                            .GET()
-                            .header("Authorization", "Bearer " + accessToken)
-                            .timeout(Duration.ofSeconds(15));
+                    HttpRequest.Builder checkReqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + savedFolderId + "?fields=id,trashed", Duration.ofSeconds(15))
+                            .GET();
                     HttpResponse<String> checkResp = sendWithRetry(checkReqBuilder, 3);
                     if (checkResp.statusCode() == 200) {
                         JsonObject folder = JsonParser.parseString(checkResp.body()).getAsJsonObject();
@@ -640,10 +632,8 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = buildQuery("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", SIMPLESYNC_FOLDER_NAME);
         String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=createdTime";
         
-        HttpRequest.Builder searchReqBuilder = HttpRequest.newBuilder(URI.create(searchUrl))
-                .GET()
-                .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30));
+        HttpRequest.Builder searchReqBuilder = authedRequest(accessToken, searchUrl, Duration.ofSeconds(30))
+                .GET();
         
         try {
             HttpResponse<String> searchResp = sendWithRetry(searchReqBuilder, 3);
@@ -666,11 +656,9 @@ public class GoogleDriveProvider implements CloudProvider {
         folderMeta.addProperty("name", SIMPLESYNC_FOLDER_NAME);
         folderMeta.addProperty("mimeType", "application/vnd.google-apps.folder");
 
-        HttpRequest.Builder createReqBuilder = HttpRequest.newBuilder(URI.create("https://www.googleapis.com/drive/v3/files?fields=id"))
+        HttpRequest.Builder createReqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files?fields=id", Duration.ofSeconds(30))
                 .POST(HttpRequest.BodyPublishers.ofString(folderMeta.toString()))
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Content-Type", "application/json; charset=UTF-8")
-                .timeout(Duration.ofSeconds(30));
+                .header("Content-Type", "application/json; charset=UTF-8");
 
         try {
             HttpResponse<String> createResp = sendWithRetry(createReqBuilder, 3);
@@ -699,10 +687,8 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
         String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
-        HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
-                .GET()
-                .header("Authorization", "Bearer " + accessToken)
-                .timeout(Duration.ofSeconds(30));
+        HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30))
+                .GET();
 
         try {
             HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
@@ -726,6 +712,12 @@ public class GoogleDriveProvider implements CloudProvider {
         if (!WorldSyncTask.isWorldNameSafe(worldName)) {
             throw new IOException("Invalid world name: " + worldName);
         }
+    }
+
+    private static HttpRequest.Builder authedRequest(String accessToken, String url, Duration timeout) {
+        return HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", "Bearer " + accessToken)
+                .timeout(timeout);
     }
 
     private boolean isSafeDriveFileId(String fileId) {

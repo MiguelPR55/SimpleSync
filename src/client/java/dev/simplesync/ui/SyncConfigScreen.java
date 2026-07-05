@@ -161,10 +161,10 @@ public class SyncConfigScreen extends Screen {
             authenticating = false;
             authenticated = success;
             if (!success && e != null) {
-                String msg = e.getMessage() != null ? e.getMessage() : "";
-                if (msg.contains("cancelled by user") || msg.contains("interrupted")) {
+                if (e instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) {
                     authError = null;
                 } else {
+                    String msg = e.getMessage() != null ? e.getMessage() : "";
                     authError = msg.isEmpty() ? "Unknown authentication error" : msg;
                 }
             } else {
