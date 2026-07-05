@@ -2,6 +2,13 @@ package dev.simplesync.util;
 
 import dev.simplesync.SimpleSync;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.Callable;
 
 public class RetryUtil {
@@ -16,6 +23,10 @@ public class RetryUtil {
                 throw new IOException(operationName + " interrupted", e);
             } catch (IOException e) {
                 lastError = e;
+                if (e.getMessage() != null && (e.getMessage().contains("invalid_grant") || e.getMessage().contains("invalid_token") || e.getMessage().contains("permanently revoked"))) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Fatal authentication error (not retrying): {}", e.getMessage());
+                    throw e;
+                }
                 SimpleSync.LOGGER.warn("[SimpleSync] {} attempt {}/{} failed: {}", operationName, attempt, maxAttempts, e.getMessage());
                 if (attempt < maxAttempts) {
                     try {
@@ -42,6 +53,23 @@ public class RetryUtil {
             action.run();
             return null;
         });
+    }
+
+    public static HttpResponse<String> postFormWithRetry(HttpClient client, String url, String body) throws IOException {
+        return retry(3, "OAuth POST", () -> {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() >= 500) throw new IOException("Server returned HTTP " + resp.statusCode());
+            return resp;
+        });
+    }
+
+    public static String urlEncode(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8);
     }
 
     @FunctionalInterface

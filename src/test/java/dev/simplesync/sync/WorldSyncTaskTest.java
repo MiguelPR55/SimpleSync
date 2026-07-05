@@ -50,8 +50,7 @@ public class WorldSyncTaskTest {
         long size = WorldSyncTask.getDirectorySize(worldFolder);
         long mtime = WorldSyncTask.getLatestModifiedTime(worldFolder);
 
-        config.setLastLocalSize(worldName, size);
-        config.setLastLocalMtime(worldName, mtime);
+        config.setTracking(worldName, new dev.simplesync.config.SyncConfig.WorldTrackingInfo(0L, size, mtime));
 
         assertFalse(WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName));
     }
@@ -64,8 +63,7 @@ public class WorldSyncTaskTest {
         long size = WorldSyncTask.getDirectorySize(worldFolder);
         long mtime = WorldSyncTask.getLatestModifiedTime(worldFolder);
 
-        config.setLastLocalSize(worldName, size);
-        config.setLastLocalMtime(worldName, mtime);
+        config.setTracking(worldName, new dev.simplesync.config.SyncConfig.WorldTrackingInfo(0L, size, mtime));
 
         // Modify file
         Files.writeString(file, "modified test data with more bytes");

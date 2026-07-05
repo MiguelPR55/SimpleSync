@@ -75,9 +75,6 @@ public class WorldSyncTask {
         return true;
     }
 
-    private static boolean isZipEntryNameSafe(String entryName) {
-        return isArchiveEntryNameSafe(entryName);
-    }
 
     /**
      * Compresses a world folder into an archive file (.tar.zst or .zip).
@@ -100,39 +97,6 @@ public class WorldSyncTask {
         }
         Files.deleteIfExists(outputArchive);
 
-        // Delete session.lock if it exists (prevents issues during sync, retry for Windows handles)
-        Path sessionLock = worldFolder.resolve("session.lock");
-        Path sessionLockBackup = worldFolder.resolve("session.lock.backup");
-        boolean backedUpLock = false;
-        if (Files.exists(sessionLock)) {
-            try {
-                Files.copy(sessionLock, sessionLockBackup, StandardCopyOption.REPLACE_EXISTING);
-                backedUpLock = true;
-            } catch (IOException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Could not back up session.lock, skipping delete: {}", e.getMessage());
-            }
-
-            if (backedUpLock) {
-                for (int i = 0; i < 5; i++) {
-                    try {
-                        Files.delete(sessionLock);
-                        break;
-                    } catch (IOException e) {
-                        if (i == 4) {
-                            SimpleSync.LOGGER.warn("[SimpleSync] Could not delete session.lock after retries: {}", e.getMessage());
-                        } else {
-                            try {
-                                Thread.sleep(100);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         SimpleSync.LOGGER.info("[SimpleSync] Compressing world: {} -> {}", worldFolder, outputArchive);
 
         try {
@@ -149,70 +113,70 @@ public class WorldSyncTask {
             if (e instanceof RuntimeException re) throw re;
             if (e instanceof Error err) throw err;
             throw new IOException("Compression failed", e);
-        } finally {
-            if (backedUpLock) {
-                try {
-                    Files.move(sessionLockBackup, sessionLock, StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException restoreEx) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to restore session.lock after compression", restoreEx);
-                }
-            }
-            try {
-                Files.deleteIfExists(sessionLockBackup);
-            } catch (IOException ignored) {}
         }
 
         SimpleSync.LOGGER.info("[SimpleSync] Compression complete: {}", outputArchive);
+    }
+
+    @FunctionalInterface
+    private interface ArchiveEntryConsumer {
+        void accept(Path path, String entryName) throws IOException;
+    }
+
+    private static void walkWorldForCompression(Path worldFolder, ArchiveEntryConsumer fileConsumer, ArchiveEntryConsumer dirConsumer) throws IOException {
+        Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (Files.isSymbolicLink(file)) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlink while compressing world: {}", file);
+                    return FileVisitResult.CONTINUE;
+                }
+                String name = file.getFileName().toString();
+                if (name.equals("session.lock") || name.equals("session.lock.backup")) {
+                    return FileVisitResult.CONTINUE;
+                }
+
+                String entryName = worldFolder.relativize(file).toString().replace('\\', '/');
+                fileConsumer.accept(file, entryName);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                if (Files.isSymbolicLink(dir)) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlinked directory while compressing world: {}", dir);
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                String dirName = dir.getFileName().toString();
+                if (dirName.endsWith("_staging") || dirName.endsWith("_backup")) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
+                if (!entryName.isEmpty()) {
+                    dirConsumer.accept(dir, entryName);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private static void compressWorldZip(Path worldFolder, Path outputZip) throws IOException {
         try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(outputZip, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 65536);
              ZipOutputStream zos = new ZipOutputStream(fos)) {
 
-            Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    if (Files.isSymbolicLink(file)) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlink while compressing world: {}", file);
-                        return FileVisitResult.CONTINUE;
+            walkWorldForCompression(worldFolder, (file, entryName) -> {
+                zos.putNextEntry(new ZipEntry(entryName));
+                try (InputStream fis = Files.newInputStream(file)) {
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    int len;
+                    while ((len = fis.read(buffer)) > 0) {
+                        zos.write(buffer, 0, len);
                     }
-                    String name = file.getFileName().toString();
-                    if (name.equals("session.lock") || name.equals("session.lock.backup")) {
-                        return FileVisitResult.CONTINUE;
-                    }
-
-                    String entryName = worldFolder.relativize(file).toString().replace('\\', '/');
-                    zos.putNextEntry(new ZipEntry(entryName));
-
-                    try (InputStream fis = new BufferedInputStream(Files.newInputStream(file), 65536)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = fis.read(buffer)) > 0) {
-                            zos.write(buffer, 0, len);
-                        }
-                    }
-
-                    zos.closeEntry();
-                    return FileVisitResult.CONTINUE;
                 }
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                    if (Files.isSymbolicLink(dir)) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlinked directory while compressing world: {}", dir);
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    String dirName = dir.getFileName().toString();
-                    if (dirName.endsWith("_staging") || dirName.endsWith("_backup")) {
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
-                    if (!entryName.isEmpty()) {
-                        zos.putNextEntry(new ZipEntry(entryName + "/"));
-                        zos.closeEntry();
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
+                zos.closeEntry();
+            }, (dir, entryName) -> {
+                zos.putNextEntry(new ZipEntry(entryName + "/"));
+                zos.closeEntry();
             });
         }
     }
@@ -225,60 +189,29 @@ public class WorldSyncTask {
             tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
             tos.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
 
-            Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    if (Files.isSymbolicLink(file)) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlink while compressing world: {}", file);
-                        return FileVisitResult.CONTINUE;
+            walkWorldForCompression(worldFolder, (file, entryName) -> {
+                TarArchiveEntry entry = new TarArchiveEntry(entryName);
+                entry.setSize(Files.size(file));
+                try {
+                    entry.setModTime(Files.getLastModifiedTime(file).toMillis());
+                } catch (Exception ignored) {}
+                tos.putArchiveEntry(entry);
+                try (InputStream fis = Files.newInputStream(file)) {
+                    byte[] buffer = new byte[BUFFER_SIZE];
+                    int len;
+                    while ((len = fis.read(buffer)) > 0) {
+                        tos.write(buffer, 0, len);
                     }
-                    String name = file.getFileName().toString();
-                    if (name.equals("session.lock") || name.equals("session.lock.backup")) {
-                        return FileVisitResult.CONTINUE;
-                    }
-
-                    String entryName = worldFolder.relativize(file).toString().replace('\\', '/');
-                    TarArchiveEntry entry = new TarArchiveEntry(entryName);
-                    entry.setSize(Files.size(file));
-                    try {
-                        entry.setModTime(Files.getLastModifiedTime(file).toMillis());
-                    } catch (Exception ignored) {}
-                    tos.putArchiveEntry(entry);
-
-                    try (InputStream fis = new BufferedInputStream(Files.newInputStream(file), 65536)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = fis.read(buffer)) > 0) {
-                            tos.write(buffer, 0, len);
-                        }
-                    }
-
-                    tos.closeArchiveEntry();
-                    return FileVisitResult.CONTINUE;
                 }
-
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                    if (Files.isSymbolicLink(dir)) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Skipping symlinked directory while compressing world: {}", dir);
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    String dirName = dir.getFileName().toString();
-                    if (dirName.endsWith("_staging") || dirName.endsWith("_backup")) {
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
-                    if (!entryName.isEmpty()) {
-                        if (!entryName.endsWith("/")) entryName += "/";
-                        TarArchiveEntry entry = new TarArchiveEntry(entryName);
-                        try {
-                            entry.setModTime(Files.getLastModifiedTime(dir).toMillis());
-                        } catch (Exception ignored) {}
-                        tos.putArchiveEntry(entry);
-                        tos.closeArchiveEntry();
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
+                tos.closeArchiveEntry();
+            }, (dir, entryName) -> {
+                String dirEntryName = entryName.endsWith("/") ? entryName : entryName + "/";
+                TarArchiveEntry entry = new TarArchiveEntry(dirEntryName);
+                try {
+                    entry.setModTime(Files.getLastModifiedTime(dir).toMillis());
+                } catch (Exception ignored) {}
+                tos.putArchiveEntry(entry);
+                tos.closeArchiveEntry();
             });
         }
     }
@@ -354,6 +287,13 @@ public class WorldSyncTask {
                 }
                 throw e;
             }
+
+            // Delete syncing marker immediately after successful move to eliminate recovery rollback window
+            try {
+                Files.deleteIfExists(syncingMarker);
+            } catch (IOException e) {
+                SimpleSync.LOGGER.error("[SimpleSync] Failed to delete syncing marker after successful move: {}", syncingMarker, e);
+            }
         } finally {
             if (Files.isDirectory(stagingDir)) {
                 deleteDirectoryRecursively(stagingDir);
@@ -380,7 +320,7 @@ public class WorldSyncTask {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 hasEntries = true;
-                if (!isZipEntryNameSafe(entry.getName())) {
+                if (!isArchiveEntryNameSafe(entry.getName())) {
                     throw new IOException("Unsafe ZIP entry name: " + entry.getName());
                 }
                 Path entryPath = stagingDir.resolve(entry.getName()).normalize();
@@ -394,7 +334,7 @@ public class WorldSyncTask {
                     Files.createDirectories(entryPath);
                 } else {
                     Files.createDirectories(entryPath.getParent());
-                    try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(entryPath), 65536)) {
+                    try (OutputStream fos = Files.newOutputStream(entryPath)) {
                         byte[] buffer = new byte[BUFFER_SIZE];
                         int len;
                         while ((len = zis.read(buffer)) > 0) {
@@ -445,7 +385,7 @@ public class WorldSyncTask {
                     if (Files.isSymbolicLink(entryPath)) {
                         Files.delete(entryPath);
                     }
-                    try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(entryPath), 65536)) {
+                    try (OutputStream fos = Files.newOutputStream(entryPath)) {
                         byte[] buffer = new byte[BUFFER_SIZE];
                         int len;
                         while ((len = tis.read(buffer)) > 0) {
@@ -660,8 +600,9 @@ public class WorldSyncTask {
             return false;
         }
 
-        long lastSize = config.getLastLocalSize(worldName);
-        long lastMtime = config.getLastLocalMtime(worldName);
+        SyncConfig.WorldTrackingInfo tracking = config.getTracking(worldName);
+        long lastSize = tracking.lastLocalSize();
+        long lastMtime = tracking.lastLocalMtime();
 
         if (lastSize == 0 && lastMtime == 0) {
             // Untracked world, needs initial sync/upload

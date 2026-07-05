@@ -20,7 +20,9 @@ public class TitleScreenMixin {
     private void onInit(CallbackInfo ci) {
         if (SimpleSync.needsTitleScreenSync) {
             SimpleSync.needsTitleScreenSync = false;
-            dev.simplesync.sync.WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                dev.simplesync.sync.WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
+            }, CloudSyncManager.getInstance().getExecutor());
 
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnStart) {

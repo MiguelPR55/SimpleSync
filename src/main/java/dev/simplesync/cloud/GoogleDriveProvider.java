@@ -61,21 +61,10 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     @Override
-    public synchronized boolean isAuthenticated() {
+    public boolean isAuthenticated() {
         try {
             TokenStore.TokenData tokens = TokenStore.load();
-            if (tokens == null) {
-                return false;
-            }
-            if (System.currentTimeMillis() >= tokens.expiresAtMs - 300000) {
-                try {
-                    ensureValidAccessToken();
-                    return true;
-                } catch (Exception e) {
-                    return false;
-                }
-            }
-            return true;
+            return tokens != null && tokens.refreshToken != null && !tokens.refreshToken.isEmpty();
         } catch (Exception e) {
             SimpleSync.LOGGER.error("[SimpleSync] Error checking authentication status", e);
             return false;
@@ -215,34 +204,88 @@ public class GoogleDriveProvider implements CloudProvider {
     }
 
     private HttpResponse<String> uploadPut(String sessionUrl, Path file, String worldName, long fileSize) throws IOException, InterruptedException {
-        java.util.function.Supplier<InputStream> supplier = () -> {
+        long offset = 0;
+        int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                InputStream fis = Files.newInputStream(file);
-                return new ProgressInputStream(fis, fileSize, worldName, true);
+                if (offset > 0 || attempt > 1) {
+                    HttpRequest statusReq = HttpRequest.newBuilder(URI.create(sessionUrl))
+                            .PUT(HttpRequest.BodyPublishers.noBody())
+                            .header("Content-Range", "bytes */" + fileSize)
+                            .timeout(Duration.ofSeconds(30))
+                            .build();
+                    HttpResponse<String> statusResp = httpClient.send(statusReq, HttpResponse.BodyHandlers.ofString());
+                    if (statusResp.statusCode() == 308) {
+                        String rangeHeader = statusResp.headers().firstValue("Range").orElse("");
+                        if (rangeHeader.startsWith("bytes=0-")) {
+                            try {
+                                long lastByte = Long.parseLong(rangeHeader.substring(8));
+                                offset = lastByte + 1;
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    } else if (statusResp.statusCode() == 200 || statusResp.statusCode() == 201) {
+                        return statusResp;
+                    }
+                }
+
+                final long currentOffset = offset;
+                final long remaining = fileSize - currentOffset;
+                java.util.function.Supplier<InputStream> supplier = () -> {
+                    try {
+                        InputStream fis = Files.newInputStream(file);
+                        if (currentOffset > 0) {
+                            fis.skip(currentOffset);
+                        }
+                        return new ProgressInputStream(fis, fileSize, worldName, true, currentOffset);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                };
+
+                HttpRequest.BodyPublisher delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
+                HttpRequest.BodyPublisher bodyPublisher = new HttpRequest.BodyPublisher() {
+                    @Override
+                    public long contentLength() {
+                        return remaining;
+                    }
+
+                    @Override
+                    public void subscribe(java.util.concurrent.Flow.Subscriber<? super java.nio.ByteBuffer> subscriber) {
+                        delegate.subscribe(subscriber);
+                    }
+                };
+
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(sessionUrl))
+                        .PUT(bodyPublisher)
+                        .timeout(Duration.ofMinutes(15));
+                if (currentOffset > 0) {
+                    reqBuilder.header("Content-Range", "bytes " + currentOffset + "-" + (fileSize - 1) + "/" + fileSize);
+                }
+                HttpRequest request = reqBuilder.build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200 || response.statusCode() == 201) {
+                    return response;
+                }
+                if (response.statusCode() == 308 && attempt < maxRetries) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Upload incomplete (HTTP 308), retrying chunk...");
+                    continue;
+                }
+                if (response.statusCode() >= 500 && attempt < maxRetries) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Server error {} during upload, retrying chunk...", response.statusCode());
+                    Thread.sleep(2000L * attempt);
+                    continue;
+                }
+                return response;
             } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
+                if (attempt == maxRetries) {
+                    throw e;
+                }
+                SimpleSync.LOGGER.warn("[SimpleSync] IOException during upload PUT (attempt {}/{}): {}. Querying resume status...", attempt, maxRetries, e.getMessage());
+                Thread.sleep(2000L * attempt);
             }
-        };
-
-        HttpRequest.BodyPublisher delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
-        HttpRequest.BodyPublisher bodyPublisher = new HttpRequest.BodyPublisher() {
-            @Override
-            public long contentLength() {
-                return fileSize;
-            }
-
-            @Override
-            public void subscribe(java.util.concurrent.Flow.Subscriber<? super java.nio.ByteBuffer> subscriber) {
-                delegate.subscribe(subscriber);
-            }
-        };
-
-        HttpRequest request = HttpRequest.newBuilder(URI.create(sessionUrl))
-                .PUT(bodyPublisher)
-                .timeout(Duration.ofMinutes(15))
-                .build();
-
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        }
+        throw new IOException("Upload PUT failed after retries");
     }
 
     @Override
@@ -313,10 +356,10 @@ public class GoogleDriveProvider implements CloudProvider {
         String accessToken = ensureValidAccessToken();
 
         do {
-            String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query)
+            String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query)
                     + "&fields=nextPageToken,files(id,name,modifiedTime,size)&pageSize=1000"
                     + "&orderBy=modifiedTime%20desc"
-                    + (pageToken != null ? "&pageToken=" + enc(pageToken) : "");
+                    + (pageToken != null ? "&pageToken=" + RetryUtil.urlEncode(pageToken) : "");
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
                     .GET()
@@ -545,13 +588,13 @@ public class GoogleDriveProvider implements CloudProvider {
             }
             ClientSecrets.Details details = secrets.getDetails();
             
-            String refreshBody = "client_id=" + enc(details.client_id)
-                    + (details.client_secret != null && !details.client_secret.isEmpty() ? "&client_secret=" + enc(details.client_secret) : "")
-                    + "&refresh_token=" + enc(tokenData.refreshToken)
+            String refreshBody = "client_id=" + RetryUtil.urlEncode(details.client_id)
+                    + (details.client_secret != null && !details.client_secret.isEmpty() ? "&client_secret=" + RetryUtil.urlEncode(details.client_secret) : "")
+                    + "&refresh_token=" + RetryUtil.urlEncode(tokenData.refreshToken)
                     + "&grant_type=refresh_token";
             
             try {
-                HttpResponse<String> response = rawPostWithRetry("https://oauth2.googleapis.com/token", refreshBody);
+                HttpResponse<String> response = RetryUtil.postFormWithRetry(httpClient, "https://oauth2.googleapis.com/token", refreshBody);
                 if (response.statusCode() == 200) {
                     JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
                     String newAccessToken = body.get("access_token").getAsString();
@@ -611,7 +654,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         String query = buildQuery("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", SIMPLESYNC_FOLDER_NAME);
-        String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=createdTime";
+        String searchUrl = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=createdTime";
         
         HttpRequest.Builder searchReqBuilder = HttpRequest.newBuilder(URI.create(searchUrl))
                 .GET()
@@ -663,14 +706,15 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private synchronized String findFileId(String fileName) throws IOException {
         if (fileIdCache.containsKey(fileName)) {
-            return fileIdCache.get(fileName);
+            String cached = fileIdCache.get(fileName);
+            return "__NOT_FOUND__".equals(cached) ? null : cached;
         }
 
         ensureSimpleSyncFolder();
         String accessToken = ensureValidAccessToken();
 
         String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
-        String url = "https://www.googleapis.com/drive/v3/files?q=" + enc(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
+        String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(url))
                 .GET()
@@ -691,6 +735,7 @@ public class GoogleDriveProvider implements CloudProvider {
         } catch (Exception e) {
             SimpleSync.LOGGER.warn("[SimpleSync] Failed to find file ID for {}: {}", fileName, e.getMessage());
         }
+        fileIdCache.put(fileName, "__NOT_FOUND__");
         return null;
     }
 
@@ -715,7 +760,7 @@ public class GoogleDriveProvider implements CloudProvider {
             int statusCode = response.statusCode();
             if (statusCode == 401) {
                 String newAccessToken = ensureValidAccessToken();
-                requestBuilder.header("Authorization", "Bearer " + newAccessToken);
+                requestBuilder.setHeader("Authorization", "Bearer " + newAccessToken);
                 throw new IOException("HTTP 401 Unauthorized (refreshed access token, retrying...)");
             } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429 && statusCode != 404) {
                 if (response.body() instanceof String strBody) {
@@ -739,29 +784,6 @@ public class GoogleDriveProvider implements CloudProvider {
         return sendWithRetry(requestBuilder, HttpResponse.BodyHandlers.ofString(), maxAttempts);
     }
 
-    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException {
-        return RetryUtil.retry(3, "OAuth POST", () -> {
-            HttpResponse<String> resp = rawPost(url, body);
-            if (resp.statusCode() >= 500) {
-                throw new IOException("Google server returned HTTP " + resp.statusCode());
-            }
-            return resp;
-        });
-    }
-
-    private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    }
-
-    private static String enc(String s) {
-        return URLEncoder.encode(s, StandardCharsets.UTF_8);
-    }
-
     // ─── Progress Tracking Stream ────────────────────────────────────────────
 
     private static class ProgressInputStream extends FilterInputStream {
@@ -772,10 +794,15 @@ public class GoogleDriveProvider implements CloudProvider {
         private int lastPercent = -1;
 
         protected ProgressInputStream(InputStream in, long totalBytes, String worldName, boolean upload) {
+            this(in, totalBytes, worldName, upload, 0);
+        }
+
+        protected ProgressInputStream(InputStream in, long totalBytes, String worldName, boolean upload, long initialOffset) {
             super(in);
             this.totalBytes = totalBytes;
             this.worldName = worldName;
             this.upload = upload;
+            this.bytesRead = initialOffset;
         }
 
         @Override

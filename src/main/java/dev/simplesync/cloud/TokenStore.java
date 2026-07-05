@@ -36,16 +36,25 @@ public class TokenStore {
         synchronized (FILE_LOCK) {
             Path dir = getCredentialsDir();
             Files.createDirectories(dir);
+            try {
+                Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+            } catch (UnsupportedOperationException | IOException ignored) {}
             Path tokensFile = dir.resolve(TOKENS_FILE);
             Path tempFile = dir.resolve(TOKENS_FILE + ".tmp");
 
             String json = GSON.toJson(data);
             Files.writeString(tempFile, json);
             try {
+                Files.setPosixFilePermissions(tempFile, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException | IOException ignored) {}
+            try {
                 Files.move(tempFile, tokensFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (Exception e) {
                 Files.move(tempFile, tokensFile, StandardCopyOption.REPLACE_EXISTING);
             }
+            try {
+                Files.setPosixFilePermissions(tokensFile, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException | IOException ignored) {}
         }
     }
 

@@ -6,11 +6,8 @@ import dev.simplesync.SimpleSync;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -46,7 +43,7 @@ public class DeviceCodeAuthenticator {
     ) throws IOException, InterruptedException {
         SimpleSync.LOGGER.info("[SimpleSync] Initiating Google Device Authorization Grant...");
 
-        String deviceCodeBody = "client_id=" + enc(clientId) + "&scope=" + enc(scope);
+        String deviceCodeBody = "client_id=" + dev.simplesync.util.RetryUtil.urlEncode(clientId) + "&scope=" + dev.simplesync.util.RetryUtil.urlEncode(scope);
         JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
         
         if (deviceResp == null || !deviceResp.has("device_code") || !deviceResp.has("user_code") || !deviceResp.has("expires_in")) {
@@ -94,14 +91,14 @@ public class DeviceCodeAuthenticator {
                 throw new IOException("Authentication cancelled by user");
             }
 
-            String tokenBody = "client_id=" + enc(clientId)
-                    + (clientSecret != null && !clientSecret.isEmpty() ? "&client_secret=" + enc(clientSecret) : "")
-                    + "&device_code=" + enc(deviceCode)
-                    + "&grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code");
+            String tokenBody = "client_id=" + dev.simplesync.util.RetryUtil.urlEncode(clientId)
+                    + (clientSecret != null && !clientSecret.isEmpty() ? "&client_secret=" + dev.simplesync.util.RetryUtil.urlEncode(clientSecret) : "")
+                    + "&device_code=" + dev.simplesync.util.RetryUtil.urlEncode(deviceCode)
+                    + "&grant_type=" + dev.simplesync.util.RetryUtil.urlEncode("urn:ietf:params:oauth:grant-type:device_code");
 
             HttpResponse<String> raw;
             try {
-                raw = rawPostWithRetry(TOKEN_URL, tokenBody);
+                raw = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, TOKEN_URL, tokenBody);
             } catch (IOException e) {
                 SimpleSync.LOGGER.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
                 continue;
@@ -137,33 +134,11 @@ public class DeviceCodeAuthenticator {
     }
 
     private JsonObject post(String url, String body) throws IOException, InterruptedException {
-        HttpResponse<String> resp = rawPostWithRetry(url, body);
+        HttpResponse<String> resp = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, url, body);
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("HTTP error from Google API (" + resp.statusCode() + "): " + resp.body());
         }
         return JsonParser.parseString(resp.body()).getAsJsonObject();
     }
 
-    private HttpResponse<String> rawPostWithRetry(String url, String body) throws IOException {
-        return dev.simplesync.util.RetryUtil.retry(3, "OAuth POST", () -> {
-            HttpResponse<String> resp = rawPost(url, body);
-            if (resp.statusCode() >= 500) {
-                throw new IOException("Google server returned HTTP " + resp.statusCode());
-            }
-            return resp;
-        });
-    }
-
-    private HttpResponse<String> rawPost(String url, String body) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    }
-
-    private static String enc(String s) {
-        return URLEncoder.encode(s, StandardCharsets.UTF_8);
-    }
 }

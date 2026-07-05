@@ -30,6 +30,7 @@ public class CloudWorldsScreen extends Screen {
     private final Screen parent;
     private List<WorldMetadata> cloudWorlds = new ArrayList<>();
     private boolean loading = true;
+    private boolean refreshInFlight = false;
     private String errorMessage = null;
     private int currentPage = 0;
     private static final int ITEMS_PER_PAGE = 5;
@@ -43,7 +44,7 @@ public class CloudWorldsScreen extends Screen {
     protected void init() {
         this.clearWidgets();
 
-        if (this.loading && this.cloudWorlds.isEmpty() && this.errorMessage == null) {
+        if (this.loading && !this.refreshInFlight && this.cloudWorlds.isEmpty() && this.errorMessage == null) {
             refreshList();
         }
 
@@ -110,11 +111,17 @@ public class CloudWorldsScreen extends Screen {
                         btn -> {
                             this.minecraft.gui.setScreen(new ConfirmScreen(confirm -> {
                                 if (confirm) {
-                                    CloudSyncManager.getInstance().deleteWorldFromCloudAsync(meta.worldName());
-                                    this.cloudWorlds.remove(meta);
-                                    if (this.currentPage * ITEMS_PER_PAGE >= this.cloudWorlds.size() && this.currentPage > 0) {
-                                        this.currentPage--;
-                                    }
+                                    CloudSyncManager.getInstance().deleteWorldFromCloudAsync(meta.worldName()).thenAccept(success -> {
+                                        if (success && this.minecraft != null) {
+                                            this.minecraft.execute(() -> {
+                                                this.cloudWorlds.remove(meta);
+                                                if (this.currentPage * ITEMS_PER_PAGE >= this.cloudWorlds.size() && this.currentPage > 0) {
+                                                    this.currentPage--;
+                                                }
+                                                this.rebuildWidgets();
+                                            });
+                                        }
+                                    });
                                 }
                                 this.minecraft.gui.setScreen(this);
                             }, Component.translatable("selectWorld.deleteQuestion"), Component.translatable("selectWorld.deleteWarning", meta.worldName()), Component.translatable("selectWorld.deleteButton"), CommonComponents.GUI_CANCEL));
@@ -126,6 +133,10 @@ public class CloudWorldsScreen extends Screen {
     }
 
     private void refreshList() {
+        if (this.refreshInFlight) {
+            return;
+        }
+        this.refreshInFlight = true;
         this.loading = true;
         this.errorMessage = null;
         CompletableFuture.runAsync(() -> {
@@ -141,6 +152,7 @@ public class CloudWorldsScreen extends Screen {
                     this.minecraft.execute(() -> {
                         this.cloudWorlds = list != null ? list : new ArrayList<>();
                         this.loading = false;
+                        this.refreshInFlight = false;
                         this.rebuildWidgets();
                     });
                 }
@@ -156,6 +168,7 @@ public class CloudWorldsScreen extends Screen {
             this.minecraft.execute(() -> {
                 this.errorMessage = e.getMessage() != null ? e.getMessage() : "Error connecting to Google Drive";
                 this.loading = false;
+                this.refreshInFlight = false;
                 this.rebuildWidgets();
             });
         }

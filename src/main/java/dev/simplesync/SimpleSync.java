@@ -92,88 +92,79 @@ public class SimpleSync implements ModInitializer {
         }
     }
 
-    public static boolean openUriRobust(URI uri) {
-        if (uri == null) return false;
-        LOGGER.info("[SimpleSync] Attempting to open URI robustly: {}", uri);
+    @FunctionalInterface
+    private interface FallbackAction {
+        boolean attempt() throws Exception;
+    }
 
+    private static boolean openRobust(String targetString, FallbackAction minecraftAction, FallbackAction awtAction) {
+        LOGGER.info("[SimpleSync] Attempting to open target robustly: {}", targetString);
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         boolean isLinux = osName.contains("linux") || osName.contains("unix");
 
         if (isLinux) {
-            if (launchSanitizedLinux("xdg-open", uri.toString())) {
-                LOGGER.info("[SimpleSync] Opened URI via sanitized xdg-open: {}", uri);
+            if (launchSanitizedLinux("xdg-open", targetString)) {
+                LOGGER.info("[SimpleSync] Opened target via sanitized xdg-open: {}", targetString);
                 return true;
             }
-            if (launchSanitizedLinux("gio", "open", uri.toString())) {
-                LOGGER.info("[SimpleSync] Opened URI via sanitized gio open: {}", uri);
+            if (launchSanitizedLinux("gio", "open", targetString)) {
+                LOGGER.info("[SimpleSync] Opened target via sanitized gio open: {}", targetString);
                 return true;
             }
         }
 
         try {
-            net.minecraft.util.Util.getPlatform().openUri(uri);
-            LOGGER.info("[SimpleSync] Opened URI via Minecraft Util.openUri: {}", uri);
-            return true;
-        } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Minecraft Util.openUri failed: {}", e.getMessage());
-        }
-
-        try {
-            if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
-                java.awt.Desktop.getDesktop().browse(uri);
-                LOGGER.info("[SimpleSync] Opened URI via Java AWT Desktop: {}", uri);
+            if (minecraftAction.attempt()) {
+                LOGGER.info("[SimpleSync] Opened target via Minecraft Util: {}", targetString);
                 return true;
             }
         } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Java AWT Desktop browse failed: {}", e.getMessage());
+            LOGGER.warn("[SimpleSync] Minecraft Util open failed: {}", e.getMessage());
+        }
+
+        try {
+            if (awtAction.attempt()) {
+                LOGGER.info("[SimpleSync] Opened target via Java AWT Desktop: {}", targetString);
+                return true;
+            }
+        } catch (Exception e) {
+            LOGGER.warn("[SimpleSync] Java AWT Desktop open failed: {}", e.getMessage());
         }
 
         return false;
     }
 
+    public static boolean openUriRobust(URI uri) {
+        if (uri == null) return false;
+        return openRobust(uri.toString(), () -> {
+            net.minecraft.util.Util.getPlatform().openUri(uri);
+            return true;
+        }, () -> {
+            if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                java.awt.Desktop.getDesktop().browse(uri);
+                return true;
+            }
+            return false;
+        });
+    }
+
     public static boolean openFileRobust(java.io.File file) {
         if (file == null) return false;
-        LOGGER.info("[SimpleSync] Attempting to open file/folder robustly: {}", file.getAbsolutePath());
-
-        String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        boolean isLinux = osName.contains("linux") || osName.contains("unix");
-
-        if (isLinux) {
-            if (launchSanitizedLinux("xdg-open", file.getAbsolutePath())) {
-                LOGGER.info("[SimpleSync] Opened file via sanitized xdg-open: {}", file.getAbsolutePath());
-                return true;
-            }
-            if (launchSanitizedLinux("gio", "open", file.getAbsolutePath())) {
-                LOGGER.info("[SimpleSync] Opened file via sanitized gio open: {}", file.getAbsolutePath());
-                return true;
-            }
-        }
-
-        try {
+        return openRobust(file.getAbsolutePath(), () -> {
             net.minecraft.util.Util.getPlatform().openUri(file.toURI());
-            LOGGER.info("[SimpleSync] Opened file via Minecraft Util.openUri: {}", file.toURI());
             return true;
-        } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Minecraft Util.openUri failed for file: {}", e.getMessage());
-        }
-
-        try {
+        }, () -> {
             if (java.awt.Desktop.isDesktopSupported()) {
                 if (java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.OPEN)) {
                     java.awt.Desktop.getDesktop().open(file);
-                    LOGGER.info("[SimpleSync] Opened file via Java AWT Desktop.open: {}", file.getAbsolutePath());
                     return true;
                 } else if (java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
                     java.awt.Desktop.getDesktop().browse(file.toURI());
-                    LOGGER.info("[SimpleSync] Opened file via Java AWT Desktop.browse: {}", file.getAbsolutePath());
                     return true;
                 }
             }
-        } catch (Exception e) {
-            LOGGER.warn("[SimpleSync] Java AWT Desktop open/browse failed for file: {}", e.getMessage());
-        }
-
-        return false;
+            return false;
+        });
     }
 
     private static boolean launchSanitizedLinux(String... command) {

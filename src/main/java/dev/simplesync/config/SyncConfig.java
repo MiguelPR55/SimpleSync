@@ -21,16 +21,22 @@ public class SyncConfig {
     private static final String CONFIG_FILE = "config.json";
     private static final Object FILE_LOCK = new Object();
     private static Path configDir;
+    private static SyncConfig INSTANCE;
 
     // Configuration fields
     public boolean autoSyncOnStart = true;
     public boolean autoSyncOnExit = true;
     public String cloudProvider = "google_drive";
-    public Map<String, Long> lastSyncTimestamps = new java.util.concurrent.ConcurrentHashMap<>();
-    public Map<String, Long> lastLocalSizes = new java.util.concurrent.ConcurrentHashMap<>();
-    public Map<String, Long> lastLocalMtimes = new java.util.concurrent.ConcurrentHashMap<>();
+    public Map<String, WorldTrackingInfo> worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
     public java.util.Set<String> ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     public String simpleSyncFolderId;
+
+    // Legacy fields for backwards-compatibility migration during deserialization
+    private Map<String, Long> lastSyncTimestamps;
+    private Map<String, Long> lastLocalSizes;
+    private Map<String, Long> lastLocalMtimes;
+
+    public record WorldTrackingInfo(long lastSyncTimestamp, long lastLocalSize, long lastLocalMtime) {}
 
     /**
      * Gets the config directory path, creating it if necessary.
@@ -56,6 +62,9 @@ public class SyncConfig {
      */
     public static SyncConfig load() {
         synchronized (FILE_LOCK) {
+            if (INSTANCE != null) {
+                return INSTANCE;
+            }
             Path configFile = getConfigDir().resolve(CONFIG_FILE);
             Path tempFile = getConfigDir().resolve(CONFIG_FILE + ".tmp");
 
@@ -71,7 +80,8 @@ public class SyncConfig {
                 } catch (IOException e) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
                 }
-                return config;
+                INSTANCE = config;
+                return INSTANCE;
             }
 
             if (Files.exists(configFile)) {
@@ -90,7 +100,18 @@ public class SyncConfig {
 
             config = new SyncConfig();
             config.save();
-            return config;
+            INSTANCE = config;
+            return INSTANCE;
+        }
+    }
+
+    /**
+     * Resets the cached singleton instance, forcing a reload from disk on next load().
+     * Useful for testing or recovery.
+     */
+    public static void resetInstance() {
+        synchronized (FILE_LOCK) {
+            INSTANCE = null;
         }
     }
 
@@ -105,9 +126,24 @@ public class SyncConfig {
             String json = Files.readString(file);
             SyncConfig config = GSON.fromJson(json, SyncConfig.class);
             if (config != null) {
-                config.lastSyncTimestamps = config.lastSyncTimestamps == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastSyncTimestamps);
-                config.lastLocalSizes = config.lastLocalSizes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalSizes);
-                config.lastLocalMtimes = config.lastLocalMtimes == null ? new java.util.concurrent.ConcurrentHashMap<>() : new java.util.concurrent.ConcurrentHashMap<>(config.lastLocalMtimes);
+                if (config.worldTracking == null) {
+                    config.worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
+                }
+                if (config.lastSyncTimestamps != null || config.lastLocalSizes != null || config.lastLocalMtimes != null) {
+                    java.util.Set<String> allWorlds = new java.util.HashSet<>();
+                    if (config.lastSyncTimestamps != null) allWorlds.addAll(config.lastSyncTimestamps.keySet());
+                    if (config.lastLocalSizes != null) allWorlds.addAll(config.lastLocalSizes.keySet());
+                    if (config.lastLocalMtimes != null) allWorlds.addAll(config.lastLocalMtimes.keySet());
+                    for (String w : allWorlds) {
+                        long ts = config.lastSyncTimestamps != null ? config.lastSyncTimestamps.getOrDefault(w, 0L) : 0L;
+                        long sz = config.lastLocalSizes != null ? config.lastLocalSizes.getOrDefault(w, 0L) : 0L;
+                        long mt = config.lastLocalMtimes != null ? config.lastLocalMtimes.getOrDefault(w, 0L) : 0L;
+                        config.worldTracking.put(w, new WorldTrackingInfo(ts, sz, mt));
+                    }
+                    config.lastSyncTimestamps = null;
+                    config.lastLocalSizes = null;
+                    config.lastLocalMtimes = null;
+                }
                 if (config.ignoredCloudWorlds == null) {
                     config.ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
                 } else {
@@ -146,28 +182,16 @@ public class SyncConfig {
         }
     }
 
-    public long getLastSyncTimestamp(String worldName) {
-        return lastSyncTimestamps.getOrDefault(worldName, 0L);
+    public WorldTrackingInfo getTracking(String worldName) {
+        return worldTracking.getOrDefault(worldName, new WorldTrackingInfo(0L, 0L, 0L));
     }
 
-    public void setLastSyncTimestamp(String worldName, long timestamp) {
-        lastSyncTimestamps.put(worldName, timestamp);
+    public void setTracking(String worldName, WorldTrackingInfo info) {
+        worldTracking.put(worldName, info);
     }
 
-    public long getLastLocalSize(String worldName) {
-        return lastLocalSizes.getOrDefault(worldName, 0L);
-    }
-
-    public void setLastLocalSize(String worldName, long size) {
-        lastLocalSizes.put(worldName, size);
-    }
-
-    public long getLastLocalMtime(String worldName) {
-        return lastLocalMtimes.getOrDefault(worldName, 0L);
-    }
-
-    public void setLastLocalMtime(String worldName, long mtime) {
-        lastLocalMtimes.put(worldName, mtime);
+    public void removeTracking(String worldName) {
+        worldTracking.remove(worldName);
     }
 
     public String getSimpleSyncFolderId() {

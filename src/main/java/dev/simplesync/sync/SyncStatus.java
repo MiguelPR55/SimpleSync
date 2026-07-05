@@ -21,4 +21,8 @@ public enum SyncStatus {
     public String getTranslationKey() {
         return "simplesync.status." + key;
     }
+
+    public boolean isBusy() {
+        return this != IDLE && this != DONE && this != ERROR;
+    }
 }

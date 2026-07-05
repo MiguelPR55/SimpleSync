@@ -31,7 +31,7 @@ public abstract class WorldListEntryMixin {
     @Inject(method = "joinWorld", at = @At("HEAD"), cancellable = true)
     private void onJoinWorld(CallbackInfo ci) {
         SyncStatus status = CloudSyncManager.getInstance().getStatus();
-        if (status == SyncStatus.DOWNLOADING || status == SyncStatus.EXTRACTING || status == SyncStatus.COMPRESSING || status == SyncStatus.UPLOADING || status == SyncStatus.CHECKING || status == SyncStatus.CONFLICT) {
+        if (status.isBusy()) {
             dev.simplesync.SimpleSync.LOGGER.warn("[SimpleSync] Prevented joining world because cloud sync is active: {}", status);
             ci.cancel();
         }
@@ -39,6 +39,12 @@ public abstract class WorldListEntryMixin {
 
     @Inject(method = "deleteWorld", at = @At("HEAD"), cancellable = true)
     private void onDeleteWorld(CallbackInfo ci) {
+        SyncStatus status = CloudSyncManager.getInstance().getStatus();
+        if (status.isBusy()) {
+            dev.simplesync.SimpleSync.LOGGER.warn("[SimpleSync] Prevented deleting world because cloud sync is active: {}", status);
+            ci.cancel();
+            return;
+        }
         String worldId = this.summary.getLevelId();
         String worldName = this.summary.getLevelName();
 
@@ -52,9 +58,7 @@ public abstract class WorldListEntryMixin {
                             CloudSyncManager.getInstance().deleteWorldFromCloudAsync(worldId);
                         } else {
                             SyncConfig config = SyncConfig.load();
-                            config.lastSyncTimestamps.remove(worldId);
-                            config.lastLocalSizes.remove(worldId);
-                            config.lastLocalMtimes.remove(worldId);
+                            config.removeTracking(worldId);
                             if (config.ignoredCloudWorlds != null) {
                                 config.ignoredCloudWorlds.add(worldId);
                             }

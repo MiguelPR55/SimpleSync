@@ -79,6 +79,7 @@ shadowJar {
     archiveClassifier = 'shadow-dev'
 
     relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
+    relocate 'com.github.luben.zstd', 'dev.simplesync.shadow.com.github.luben.zstd'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'
@@ -103,7 +104,6 @@ shadowJar {
     exclude 'linux/arm/**'
     exclude 'win/x86/**'
     exclude 'win/aarch64/**'
-    exclude 'darwin/**'
 
     // Exclude unused compression formats and archivers from commons-compress
     exclude '**/archivers/sevenz/**'
