@@ -79,7 +79,6 @@ shadowJar {
     archiveClassifier = 'shadow-dev'
 
     relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
-    relocate 'com.github.luben.zstd', 'dev.simplesync.shadow.com.github.luben.zstd'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'

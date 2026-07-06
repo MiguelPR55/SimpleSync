@@ -24,6 +24,10 @@ public class WorldSyncTask {
     private static final int BUFFER_SIZE = 8192;
     private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB — large modded worlds can be very big
 
+    private static final String SUFFIX_STAGING = "_staging";
+    private static final String SUFFIX_BACKUP = "_backup";
+    private static final String SUFFIX_SYNCING = ".syncing";
+
     private static final java.util.regex.Pattern WINDOWS_RESERVED_NAMES = java.util.regex.Pattern.compile(
             "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?$", java.util.regex.Pattern.CASE_INSENSITIVE
     );
@@ -148,7 +152,7 @@ public class WorldSyncTask {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
                 String dirName = dir.getFileName().toString();
-                if (dirName.endsWith("_staging") || dirName.endsWith("_backup")) {
+                if (dirName.endsWith(SUFFIX_STAGING) || dirName.endsWith(SUFFIX_BACKUP)) {
                     return FileVisitResult.SKIP_SUBTREE;
                 }
                 String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
@@ -229,9 +233,9 @@ public class WorldSyncTask {
         }
 
         Path normalizedTarget = worldFolder.toAbsolutePath().normalize();
-        Path stagingDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + "_staging");
-        Path backupDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + "_backup");
-        Path syncingMarker = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + ".syncing");
+        Path stagingDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + SUFFIX_STAGING);
+        Path backupDir = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + SUFFIX_BACKUP);
+        Path syncingMarker = normalizedTarget.resolveSibling(normalizedTarget.getFileName() + SUFFIX_SYNCING);
 
         SimpleSync.LOGGER.info("[SimpleSync] Extracting world: {} -> {} (via staging)", archiveFile, normalizedTarget);
 
@@ -322,16 +326,7 @@ public class WorldSyncTask {
                 } else {
                     Files.createDirectories(entryPath.getParent());
                     try (OutputStream fos = Files.newOutputStream(entryPath)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            totalExtracted += len;
-                            if (totalExtracted > MAX_EXTRACT_SIZE) {
-                                throw new IOException("Extraction aborted: uncompressed data exceeds maximum allowed size ("
-                                        + (MAX_EXTRACT_SIZE / (1024 * 1024 * 1024)) + " GB). Possible zip bomb.");
-                            }
-                            fos.write(buffer, 0, len);
-                        }
+                        totalExtracted = copyWithLimit(zis, fos, totalExtracted, MAX_EXTRACT_SIZE, "zip");
                     }
                 }
 
@@ -373,16 +368,7 @@ public class WorldSyncTask {
                         Files.delete(entryPath);
                     }
                     try (OutputStream fos = Files.newOutputStream(entryPath)) {
-                        byte[] buffer = new byte[BUFFER_SIZE];
-                        int len;
-                        while ((len = tis.read(buffer)) > 0) {
-                            totalExtracted += len;
-                            if (totalExtracted > MAX_EXTRACT_SIZE) {
-                                throw new IOException("Extraction aborted: uncompressed data exceeds maximum allowed size ("
-                                        + (MAX_EXTRACT_SIZE / (1024 * 1024 * 1024)) + " GB). Possible archive bomb.");
-                            }
-                            fos.write(buffer, 0, len);
-                        }
+                        totalExtracted = copyWithLimit(tis, fos, totalExtracted, MAX_EXTRACT_SIZE, "archive");
                     }
                 }
             }
@@ -390,6 +376,21 @@ public class WorldSyncTask {
                 throw new IOException("TAR.ZST archive is empty or invalid: " + archiveFile);
             }
         }
+    }
+
+    private static long copyWithLimit(InputStream in, OutputStream out, long alreadyExtracted, long maxTotal, String archiveType) throws IOException {
+        byte[] buffer = new byte[BUFFER_SIZE];
+        int len;
+        long totalExtracted = alreadyExtracted;
+        while ((len = in.read(buffer)) > 0) {
+            totalExtracted += len;
+            if (totalExtracted > maxTotal) {
+                throw new IOException("Extraction aborted: uncompressed data exceeds maximum allowed size ("
+                        + (maxTotal / (1024 * 1024 * 1024)) + " GB). Possible " + archiveType + " bomb.");
+            }
+            out.write(buffer, 0, len);
+        }
+        return totalExtracted;
     }
 
     /**
@@ -406,11 +407,11 @@ public class WorldSyncTask {
             for (Path entry : stream) {
                 if (Files.isRegularFile(entry)) {
                     String name = entry.getFileName().toString();
-                    if (name.endsWith(".syncing")) {
-                        String worldName = name.substring(0, name.length() - ".syncing".length());
+                    if (name.endsWith(SUFFIX_SYNCING)) {
+                        String worldName = name.substring(0, name.length() - SUFFIX_SYNCING.length());
                         Path originalWorld = savesDir.resolve(worldName);
-                        Path backupDir = savesDir.resolve(worldName + "_backup");
-                        Path stagingDir = savesDir.resolve(worldName + "_staging");
+                        Path backupDir = savesDir.resolve(worldName + SUFFIX_BACKUP);
+                        Path stagingDir = savesDir.resolve(worldName + SUFFIX_STAGING);
 
                         SimpleSync.LOGGER.warn("[SimpleSync] Detected interrupted sync session for world '{}'", worldName);
                         try {
@@ -445,15 +446,15 @@ public class WorldSyncTask {
                     continue;
                 }
                 String name = entry.getFileName().toString();
-                if (name.endsWith("_staging")) {
+                if (name.endsWith(SUFFIX_STAGING)) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Cleaning up orphaned staging directory: {}", entry);
                     try {
                         deleteDirectoryRecursively(entry);
                     } catch (IOException e) {
                         SimpleSync.LOGGER.error("[SimpleSync] Failed to delete staging directory: {}", entry, e);
                     }
-                } else if (name.endsWith("_backup")) {
-                    String originalName = name.substring(0, name.length() - "_backup".length());
+                } else if (name.endsWith(SUFFIX_BACKUP)) {
+                    String originalName = name.substring(0, name.length() - SUFFIX_BACKUP.length());
                     Path originalWorld = savesDir.resolve(originalName);
                     if (!Files.exists(originalWorld)) {
                         SimpleSync.LOGGER.warn("[SimpleSync] Restoring orphaned backup directory to original world: {} -> {}", entry, originalWorld);
