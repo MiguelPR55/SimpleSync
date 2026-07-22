@@ -92,7 +92,7 @@ public class RetryUtil {
     }
 
     public static String urlEncode(String s) {
-        return URLEncoder.encode(s, StandardCharsets.UTF_8);
+        return s != null ? URLEncoder.encode(s, StandardCharsets.UTF_8) : "";
     }
 
     @FunctionalInterface

@@ -34,7 +34,8 @@ public class WorldArchiver {
 
         SimpleSync.LOGGER.info("[SimpleSync] Compressing: {} -> {}", worldFolder, outputArchive);
         try {
-            if (detectFormat(outputArchive) == ArchiveFormat.ZIP) {
+            boolean isZip = outputArchive.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".zip");
+            if (isZip) {
                 compressZip(worldFolder, outputArchive);
             } else {
                 compressTarZst(worldFolder, outputArchive);
@@ -181,7 +182,7 @@ public class WorldArchiver {
     private static void walkWorld(Path worldFolder, EntryConsumer fileConsumer, EntryConsumer dirConsumer) throws IOException {
         Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                if (Files.isSymbolicLink(file)) return FileVisitResult.CONTINUE;
+                if (Files.isSymbolicLink(file) || !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.CONTINUE;
                 String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                 if (name.equals("session.lock") || name.equals("session.lock.backup") || name.equals("level.dat_old") || name.equals("uid.dat")) return FileVisitResult.CONTINUE;
                 if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part")) return FileVisitResult.CONTINUE;
@@ -189,7 +190,7 @@ public class WorldArchiver {
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                if (Files.isSymbolicLink(dir)) return FileVisitResult.SKIP_SUBTREE;
+                if (Files.isSymbolicLink(dir) || !Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.SKIP_SUBTREE;
                 String dirName = dir.getFileName().toString();
                 if (dirName.endsWith(SUFFIX_STAGING) || dirName.endsWith(SUFFIX_BACKUP)) return FileVisitResult.SKIP_SUBTREE;
                 String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
@@ -200,7 +201,8 @@ public class WorldArchiver {
     }
 
     private static void compressZip(Path worldFolder, Path output) throws IOException {
-        try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE_NEW), BUFFER_SIZE);
+        if (output.getParent() != null) Files.createDirectories(output.getParent());
+        try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZipOutputStream(fos)) {
             walkWorld(worldFolder,
                     (file, name) -> { zos.putNextEntry(new ZipEntry(name)); try (var is = Files.newInputStream(file)) { transfer(is, zos); } zos.closeEntry(); },
@@ -209,7 +211,8 @@ public class WorldArchiver {
     }
 
     private static void compressTarZst(Path worldFolder, Path output) throws IOException {
-        try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE_NEW), BUFFER_SIZE);
+        if (output.getParent() != null) Files.createDirectories(output.getParent());
+        try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZstdCompressorOutputStream(fos);
              var tos = new TarArchiveOutputStream(zos)) {
             tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
@@ -283,13 +286,14 @@ public class WorldArchiver {
 
     public enum ArchiveFormat { ZIP, TAR_ZST }
 
-    public static ArchiveFormat detectFormat(Path path) {
+    public static ArchiveFormat detectFormat(Path path) throws IOException {
         try (var fis = Files.newInputStream(path)) {
             byte[] magic = new byte[4];
             int read = fis.read(magic);
             if (read >= 2 && magic[0] == (byte) 0x50 && magic[1] == (byte) 0x4B) return ArchiveFormat.ZIP;
             if (read >= 4 && magic[0] == (byte) 0x28 && magic[1] == (byte) 0xB5 && magic[2] == (byte) 0x2F && magic[3] == (byte) 0xFD) return ArchiveFormat.TAR_ZST;
-        } catch (IOException ignored) {}
-        return path.getFileName().toString().endsWith(".zip") ? ArchiveFormat.ZIP : ArchiveFormat.TAR_ZST;
+            String headerPreview = read > 0 ? new String(magic, 0, read, java.nio.charset.StandardCharsets.UTF_8) : "empty";
+            throw new IOException("Invalid archive magic header for '" + path.getFileName() + "'. Header preview: '" + headerPreview + "'");
+        }
     }
 }

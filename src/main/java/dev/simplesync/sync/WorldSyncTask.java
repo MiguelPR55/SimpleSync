@@ -32,7 +32,7 @@ public class WorldSyncTask {
         OrphanCleaner.cleanup(savesDir);
     }
 
-    public static WorldArchiver.ArchiveFormat detectFormat(Path path) {
+    public static WorldArchiver.ArchiveFormat detectFormat(Path path) throws IOException {
         return WorldArchiver.detectFormat(path);
     }
 
