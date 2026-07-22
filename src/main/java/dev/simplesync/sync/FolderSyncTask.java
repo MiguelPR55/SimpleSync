@@ -27,13 +27,13 @@ public class FolderSyncTask {
      * Scans a local directory recursively and returns metadata for all valid files.
      */
     public static List<LocalFileInfo> scanLocalDirectory(Path baseDir) throws IOException {
-        List<LocalFileInfo> result = new ArrayList<>();
+        List<LocalFileInfo> result = java.util.Collections.synchronizedList(new ArrayList<>());
         if (!Files.isDirectory(baseDir)) {
             return result;
         }
 
         try (Stream<Path> stream = Files.walk(baseDir)) {
-            stream.filter(Files::isRegularFile).forEach(path -> {
+            stream.parallel().filter(Files::isRegularFile).forEach(path -> {
                 String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                 if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
                     return;
@@ -46,14 +46,14 @@ public class FolderSyncTask {
                 } catch (IOException ignored) {}
             });
         }
-        return result;
+        return new ArrayList<>(result);
     }
 
     /**
      * Scans specified Masa mod configuration files and folders relative to game root directory.
      */
     public static List<LocalFileInfo> scanMasaConfigFiles(Path gameRootDir) throws IOException {
-        Map<String, LocalFileInfo> resultMap = new java.util.LinkedHashMap<>();
+        Map<String, LocalFileInfo> resultMap = new java.util.concurrent.ConcurrentHashMap<>();
 
         // Individual JSON files in config/
         List<String> singleConfigFiles = List.of(
@@ -64,7 +64,7 @@ public class FolderSyncTask {
                 "config/malilib.json"
         );
 
-        for (String relPath : singleConfigFiles) {
+        singleConfigFiles.parallelStream().forEach(relPath -> {
             Path file = gameRootDir.resolve(relPath);
             if (Files.isRegularFile(file)) {
                 try {
@@ -73,7 +73,7 @@ public class FolderSyncTask {
                     resultMap.put(relPath, new LocalFileInfo(relPath, file, mtime, size));
                 } catch (IOException ignored) {}
             }
-        }
+        });
 
         // Config subdirectories
         List<String> configDirs = List.of(
@@ -84,11 +84,11 @@ public class FolderSyncTask {
                 "itemscroller"
         );
 
-        for (String relDirPath : configDirs) {
+        configDirs.parallelStream().forEach(relDirPath -> {
             Path dir = gameRootDir.resolve(relDirPath);
             if (Files.isDirectory(dir)) {
                 try (Stream<Path> stream = Files.walk(dir)) {
-                    stream.filter(Files::isRegularFile).forEach(path -> {
+                    stream.parallel().filter(Files::isRegularFile).forEach(path -> {
                         String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                         if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
                             return;
@@ -100,9 +100,9 @@ public class FolderSyncTask {
                             resultMap.put(relPath, new LocalFileInfo(relPath, path, mtime, size));
                         } catch (IOException ignored) {}
                     });
-                }
+                } catch (IOException ignored) {}
             }
-        }
+        });
 
         return new ArrayList<>(resultMap.values());
     }
