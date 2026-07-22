@@ -431,7 +431,10 @@ public class GoogleDriveProvider implements CloudProvider {
 
         try {
             HttpResponse<InputStream> resp = api.send(req, HttpResponse.BodyHandlers.ofInputStream(), 3);
-            if (resp.statusCode() != 200) throw new IOException("Download failed: HTTP " + resp.statusCode());
+            if (resp.statusCode() != 200) {
+                closeBodyQuietly(resp.body());
+                throw new IOException("Download failed: HTTP " + resp.statusCode());
+            }
 
             try (InputStream is = new ProgressInputStream(resp.body(), meta.sizeBytes(), worldName, false);
                  OutputStream os = new BufferedOutputStream(
@@ -508,6 +511,12 @@ public class GoogleDriveProvider implements CloudProvider {
     private void validateWorldName(String worldName) throws IOException {
         if (!WorldSyncTask.isWorldNameSafe(worldName)) {
             throw new IOException("Invalid world name: " + worldName);
+        }
+    }
+
+    private static void closeBodyQuietly(Object body) {
+        if (body instanceof InputStream is) {
+            try { is.close(); } catch (Exception ignored) {}
         }
     }
 }

@@ -62,6 +62,10 @@ public class SimpleSync implements ModInitializer {
             "dev.simplesync.sync.WorldMetadata",
             "dev.simplesync.sync.StatusSnapshot",
             "dev.simplesync.sync.SyncStatus",
+            "java.util.concurrent.CompletableFuture",
+            "java.net.http.HttpClient",
+            "java.net.http.HttpRequest",
+            "java.net.http.HttpResponse",
             "dev.simplesync.shadow.org.apache.commons.compress.archivers.tar.TarArchiveOutputStream",
             "dev.simplesync.shadow.org.apache.commons.compress.archivers.zip.ZipEncodingHelper",
             "dev.simplesync.shadow.org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStream"

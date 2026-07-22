@@ -54,6 +54,9 @@ public class SyncStatusOverlay {
         }
 
         Minecraft client = Minecraft.getInstance();
+        if (client == null || client.font == null) {
+            return;
+        }
         Font font = client.font;
         String statusText = Component.translatable(status.getTranslationKey()).getString();
         String detail = snapshot.detail();

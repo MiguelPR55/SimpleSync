@@ -50,6 +50,7 @@ public class WorldArchiver {
 
     public static void extractWorld(Path archiveFile, Path worldFolder) throws IOException {
         if (!Files.exists(archiveFile)) throw new IOException("Archive does not exist: " + archiveFile);
+        if (Files.size(archiveFile) == 0) throw new IOException("Archive is empty (0 bytes): " + archiveFile);
 
         Path target = worldFolder.toAbsolutePath().normalize();
         Path stagingDir = target.resolveSibling(target.getFileName() + SUFFIX_STAGING);

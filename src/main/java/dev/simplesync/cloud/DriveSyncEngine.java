@@ -207,12 +207,16 @@ public class DriveSyncEngine {
         HttpResponse<InputStream> resp = api.send(req, HttpResponse.BodyHandlers.ofInputStream(), 3);
 
         if (resp.statusCode() != 200) {
+            closeBodyQuietly(resp.body());
             throw new IOException("Failed to download " + remote.relativePath() + ": HTTP " + resp.statusCode());
         }
 
         try (InputStream is = resp.body();
              OutputStream os = Files.newOutputStream(targetFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
             is.transferTo(os);
+        } catch (IOException e) {
+            try { Files.deleteIfExists(targetFile); } catch (IOException ignored) {}
+            throw e;
         }
 
         if (remote.lastModified() > 0) {
@@ -346,5 +350,11 @@ public class DriveSyncEngine {
             }
         }
         return currentParentId;
+    }
+
+    private static void closeBodyQuietly(Object body) {
+        if (body instanceof InputStream is) {
+            try { is.close(); } catch (Exception ignored) {}
+        }
     }
 }
