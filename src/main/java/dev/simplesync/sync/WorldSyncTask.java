@@ -21,7 +21,7 @@ import org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStr
 
 public class WorldSyncTask {
 
-    private static final int BUFFER_SIZE = 1048576; // 1 MB buffer for max E/S throughput
+    private static final int BUFFER_SIZE = 262144; // 256 KB buffer for max throughput
     private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB — large modded worlds can be very big
 
     private static final String SUFFIX_STAGING = "_staging";
@@ -183,7 +183,7 @@ public class WorldSyncTask {
 
     private static void compressWorldTarZst(Path worldFolder, Path outputArchive) throws IOException {
         try (OutputStream fileOutputStream = new BufferedOutputStream(Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), BUFFER_SIZE);
-             ZstdCompressorOutputStream zstdOutputStream = new ZstdCompressorOutputStream(fileOutputStream, 1);
+             ZstdCompressorOutputStream zstdOutputStream = new ZstdCompressorOutputStream(fileOutputStream);
              TarArchiveOutputStream tarOutputStream = new TarArchiveOutputStream(zstdOutputStream)) {
 
             tarOutputStream.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);

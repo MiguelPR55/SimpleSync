@@ -58,11 +58,6 @@ public class GoogleDriveProvider implements CloudProvider {
                 .version(HttpClient.Version.HTTP_2)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(15))
-                .executor(java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
-                    Thread t = new Thread(r, "SimpleSync-HTTP");
-                    t.setDaemon(true);
-                    return t;
-                }))
                 .build();
     }
 
@@ -332,8 +327,8 @@ public class GoogleDriveProvider implements CloudProvider {
                 throw new IOException("Download failed: HTTP " + response.statusCode());
             }
             try (InputStream is = new ProgressInputStream(response.body(), fileSize, worldName, false);
-                 OutputStream os = new BufferedOutputStream(Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE), 1048576)) {
-                byte[] buffer = new byte[1048576];
+                 OutputStream os = new BufferedOutputStream(Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE), 262144)) {
+                byte[] buffer = new byte[262144];
                 int len;
                 while ((len = is.read(buffer)) > 0) {
                     os.write(buffer, 0, len);
