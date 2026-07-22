@@ -627,22 +627,58 @@ public class GoogleDriveProvider implements CloudProvider {
         List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
         dev.simplesync.sync.FolderSyncTask.SyncPlan plan = dev.simplesync.sync.FolderSyncTask.createSyncPlan(localFiles, remoteFiles, config.fileTracking);
 
-        Map<String, String> folderPathToIdMap = reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId);
+        Map<String, String> folderPathToIdMap = new ConcurrentHashMap<>(reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId));
         folderPathToIdMap.put("", rootRemoteFolderId);
 
-        for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
-            uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
-            long now = System.currentTimeMillis();
-            config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
-            config.save();
-        }
+        int maxThreads = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
+        java.util.concurrent.ExecutorService filePool = java.util.concurrent.Executors.newFixedThreadPool(maxThreads, r -> {
+            Thread t = new Thread(r, "SimpleSync-FileWorker");
+            t.setDaemon(true);
+            return t;
+        });
 
-        for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
-            downloadSingleFileIncremental(accessToken, localBaseDir, remote);
-            long now = System.currentTimeMillis();
-            long localMtime = remote.lastModified() > 0 ? remote.lastModified() : now;
-            config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
-            config.save();
+        try {
+            List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
+
+            for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+                        long now = System.currentTimeMillis();
+                        synchronized (config) {
+                            config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
+                            config.save();
+                        }
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }, filePool));
+            }
+
+            for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        downloadSingleFileIncremental(accessToken, localBaseDir, remote);
+                        long now = System.currentTimeMillis();
+                        long localMtime = remote.lastModified() > 0 ? remote.lastModified() : now;
+                        synchronized (config) {
+                            config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
+                            config.save();
+                        }
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }, filePool));
+            }
+
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+        } catch (java.util.concurrent.CompletionException ce) {
+            if (ce.getCause() instanceof java.io.UncheckedIOException uioe) {
+                throw uioe.getCause();
+            }
+            throw new IOException("Parallel incremental sync failed: " + ce.getMessage(), ce);
+        } finally {
+            filePool.shutdown();
         }
     }
 
@@ -832,7 +868,7 @@ public class GoogleDriveProvider implements CloudProvider {
         }
     }
 
-    private String resolveOrCreateRemoteFolderPath(String relFolderPath, String rootFolderId, Map<String, String> folderMap) throws IOException {
+    private synchronized String resolveOrCreateRemoteFolderPath(String relFolderPath, String rootFolderId, Map<String, String> folderMap) throws IOException {
         if (relFolderPath == null || relFolderPath.isEmpty()) {
             return rootFolderId;
         }
