@@ -275,6 +275,7 @@ public class WorldArchiver {
     }
 
     private static void deleteWithRetry(Path path) throws IOException {
+        try { Files.setAttribute(path, "dos:readonly", false); } catch (Exception ignored) {}
         for (int i = 0; i < 3; i++) {
             try { Files.deleteIfExists(path); return; }
             catch (IOException e) {
