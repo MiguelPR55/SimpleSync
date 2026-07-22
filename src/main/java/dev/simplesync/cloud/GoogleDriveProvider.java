@@ -348,7 +348,12 @@ public class GoogleDriveProvider implements CloudProvider {
 
                 final long curOffset = offset;
                 final long remaining = fileSize - curOffset;
+                final java.util.concurrent.atomic.AtomicReference<InputStream> openStream = new java.util.concurrent.atomic.AtomicReference<>();
                 java.util.function.Supplier<InputStream> supplier = () -> {
+                    InputStream prev = openStream.get();
+                    if (prev != null) {
+                        try { prev.close(); } catch (IOException ignored) {}
+                    }
                     try {
                         InputStream fis = Files.newInputStream(file);
                         if (curOffset > 0) {
@@ -366,7 +371,9 @@ public class GoogleDriveProvider implements CloudProvider {
                                 }
                             }
                         }
-                        return new ProgressInputStream(fis, fileSize, worldName, true, curOffset);
+                        ProgressInputStream pis = new ProgressInputStream(fis, fileSize, worldName, true, curOffset);
+                        openStream.set(pis);
+                        return pis;
                     } catch (IOException e) { throw new UncheckedIOException(e); }
                 };
 
@@ -382,7 +389,15 @@ public class GoogleDriveProvider implements CloudProvider {
                     reqBuilder.header("Content-Range", "bytes " + curOffset + "-" + (fileSize - 1) + "/" + fileSize);
                 }
 
-                HttpResponse<String> resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> resp;
+                try {
+                    resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                } finally {
+                    InputStream s = openStream.get();
+                    if (s != null) {
+                        try { s.close(); } catch (IOException ignored) {}
+                    }
+                }
                 if (resp.statusCode() == 200 || resp.statusCode() == 201) return resp;
                 if (resp.statusCode() == 308 && attempt < 3) continue;
                 if (resp.statusCode() >= 500 && attempt < 3) {

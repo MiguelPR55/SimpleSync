@@ -17,7 +17,18 @@ import java.util.Map;
  */
 public class SyncConfig {
 
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Gson GSON = new GsonBuilder()
+            .setPrettyPrinting()
+            .disableHtmlEscaping()
+            .registerTypeHierarchyAdapter(java.util.concurrent.ConcurrentHashMap.class,
+                    (com.google.gson.JsonSerializer<java.util.concurrent.ConcurrentHashMap<?, ?>>) (src, typeOfSrc, context) -> {
+                        com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
+                        src.entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey(java.util.Comparator.comparing(Object::toString)))
+                                .forEach(e -> obj.add(String.valueOf(e.getKey()), context.serialize(e.getValue())));
+                        return obj;
+                    })
+            .create();
     private static final String CONFIG_FILE = "config.json";
     private static final Object FILE_LOCK = new Object();
     private static volatile Path configDir;

@@ -15,7 +15,7 @@ public class SimpleSync implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     private static volatile String lastWorldName = null;
-    public static volatile boolean needsTitleScreenSync = true;
+    public static final java.util.concurrent.atomic.AtomicBoolean needsTitleScreenSync = new java.util.concurrent.atomic.AtomicBoolean(true);
 
     @Override
     public void onInitialize() {
@@ -37,7 +37,7 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             if (server.isDedicatedServer() || lastWorldName == null) return;
-            needsTitleScreenSync = true;
+            needsTitleScreenSync.set(true);
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnExit) {
                 LOGGER.info("[SimpleSync] World stopped: {}. Uploading...", lastWorldName);

@@ -64,6 +64,11 @@ public class DriveSyncEngine {
         List<FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
         FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(localFiles, remoteFiles, config.fileTracking);
 
+        Map<String, String> remoteFileIdMap = new ConcurrentHashMap<>();
+        for (FolderSyncTask.RemoteFileInfo remote : remoteFiles) {
+            remoteFileIdMap.put(remote.relativePath(), remote.fileId());
+        }
+
         Map<String, String> folderPathToIdMap = new ConcurrentHashMap<>(reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId));
         folderPathToIdMap.put("", rootRemoteFolderId);
 
@@ -73,7 +78,7 @@ public class DriveSyncEngine {
             for (FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
                 futures.add(CompletableFuture.runAsync(() -> {
                     try {
-                        uploadSingleFile(rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+                        uploadSingleFile(rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFileIdMap);
                         long now = System.currentTimeMillis();
                         synchronized (config) {
                             config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
@@ -115,18 +120,14 @@ public class DriveSyncEngine {
     private void uploadSingleFile(String rootFolderId, Path localBaseDir,
                                   FolderSyncTask.LocalFileInfo local,
                                   Map<String, String> folderMap,
-                                  List<FolderSyncTask.RemoteFileInfo> remoteFiles) throws IOException {
+                                  Map<String, String> remoteFileIdMap) throws IOException {
         String relPath = local.relativePath();
         int lastSlash = relPath.lastIndexOf('/');
         String parentRelPath = lastSlash > 0 ? relPath.substring(0, lastSlash) : "";
         String fileName = lastSlash >= 0 ? relPath.substring(lastSlash + 1) : relPath;
 
         String parentFolderId = resolveOrCreateRemoteFolderPath(parentRelPath, rootFolderId, folderMap);
-
-        String existingFileId = remoteFiles.stream()
-                .filter(r -> r.relativePath().equals(relPath))
-                .map(FolderSyncTask.RemoteFileInfo::fileId)
-                .findFirst().orElse(null);
+        String existingFileId = remoteFileIdMap.get(relPath);
 
         if (existingFileId != null) {
             String url = "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=media";
@@ -233,7 +234,14 @@ public class DriveSyncEngine {
         Set<String> visited = new HashSet<>();
         visited.add(rootFolderId);
 
+        int depth = 0;
+        final int MAX_DEPTH = 20;
+
         while (!currentLevel.isEmpty()) {
+            if (++depth > MAX_DEPTH) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Folder traversal depth exceeded max limit ({}). Stopping level iteration.", MAX_DEPTH);
+                break;
+            }
             List<String> nextLevel = new ArrayList<>();
 
             for (int i = 0; i < currentLevel.size(); i += 30) {

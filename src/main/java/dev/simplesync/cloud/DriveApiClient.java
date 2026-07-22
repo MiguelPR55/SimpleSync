@@ -35,6 +35,7 @@ public class DriveApiClient {
         String token = tokenManager.ensureValidAccessToken();
         return HttpRequest.newBuilder(URI.create(url))
                 .header("Authorization", "Bearer " + token)
+                .header("User-Agent", "SimpleSync/1.0")
                 .timeout(timeout);
     }
 

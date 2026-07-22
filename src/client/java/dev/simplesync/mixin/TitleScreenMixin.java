@@ -18,8 +18,7 @@ public class TitleScreenMixin {
 
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
-        if (SimpleSync.needsTitleScreenSync) {
-            SimpleSync.needsTitleScreenSync = false;
+        if (SimpleSync.needsTitleScreenSync.compareAndSet(true, false)) {
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnStart) {
                 SimpleSync.LOGGER.info("[SimpleSync] Title screen opened, starting cloud sync...");

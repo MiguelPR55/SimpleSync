@@ -185,7 +185,7 @@ public class WorldArchiver {
                 if (Files.isSymbolicLink(file) || !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.CONTINUE;
                 String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                 if (name.equals("session.lock") || name.equals("session.lock.backup") || name.equals("level.dat_old") || name.equals("uid.dat")) return FileVisitResult.CONTINUE;
-                if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part")) return FileVisitResult.CONTINUE;
+                if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part") || name.endsWith(".syncing") || name.endsWith(".download") || name.endsWith(".staging")) return FileVisitResult.CONTINUE;
                 fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'));
                 return FileVisitResult.CONTINUE;
             }

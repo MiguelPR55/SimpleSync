@@ -33,7 +33,7 @@ public class FolderSyncTask {
         }
 
         try (Stream<Path> stream = Files.walk(baseDir)) {
-            stream.parallel().filter(Files::isRegularFile).forEach(path -> {
+            stream.filter(Files::isRegularFile).forEach(path -> {
                 String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                 if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
                     return;
@@ -64,7 +64,7 @@ public class FolderSyncTask {
                 "config/malilib.json"
         );
 
-        singleConfigFiles.parallelStream().forEach(relPath -> {
+        singleConfigFiles.forEach(relPath -> {
             Path file = gameRootDir.resolve(relPath);
             if (Files.isRegularFile(file)) {
                 try {
@@ -84,7 +84,7 @@ public class FolderSyncTask {
                 "itemscroller"
         );
 
-        configDirs.parallelStream().forEach(relDirPath -> {
+        configDirs.forEach(relDirPath -> {
             Path dir = gameRootDir.resolve(relDirPath);
             if (Files.isDirectory(dir)) {
                 try (Stream<Path> stream = Files.walk(dir)) {
