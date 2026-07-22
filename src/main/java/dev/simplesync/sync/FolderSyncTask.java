@@ -20,7 +20,7 @@ public class FolderSyncTask {
     public record RemoteFileInfo(String relativePath, String fileId, long lastModified, long size) {}
     public record SyncPlan(List<LocalFileInfo> toUpload, List<RemoteFileInfo> toDownload) {}
 
-    private static final Set<String> IGNORED_EXTENSIONS = Set.of(".tmp", ".bak", ".crdownload", ".DS_Store");
+    private static final Set<String> IGNORED_EXTENSIONS = Set.of(".tmp", ".bak", ".crdownload", ".download", ".staging", ".part", ".lock", ".DS_Store");
     private static final long TIMESTAMP_TOLERANCE_MS = 2000L;
 
     /**
