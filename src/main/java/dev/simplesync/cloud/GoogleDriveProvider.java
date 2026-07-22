@@ -324,7 +324,21 @@ public class GoogleDriveProvider implements CloudProvider {
                 java.util.function.Supplier<InputStream> supplier = () -> {
                     try {
                         InputStream fis = Files.newInputStream(file);
-                        if (curOffset > 0) fis.skip(curOffset);
+                        if (curOffset > 0) {
+                            long remainingToSkip = curOffset;
+                            while (remainingToSkip > 0) {
+                                long skipped = fis.skip(remainingToSkip);
+                                if (skipped <= 0) {
+                                    if (fis.read() == -1) {
+                                        fis.close();
+                                        throw new IOException("Unexpected EOF while seeking to offset " + curOffset);
+                                    }
+                                    remainingToSkip--;
+                                } else {
+                                    remainingToSkip -= skipped;
+                                }
+                            }
+                        }
                         return new ProgressInputStream(fis, fileSize, worldName, true, curOffset);
                     } catch (IOException e) { throw new UncheckedIOException(e); }
                 };

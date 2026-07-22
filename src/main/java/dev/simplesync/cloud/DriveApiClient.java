@@ -52,6 +52,7 @@ public class DriveApiClient {
 
                 if (code == 401 && !refreshedToken) {
                     refreshedToken = true;
+                    closeBodyQuietly(response.body());
                     SimpleSync.LOGGER.info("[SimpleSync] HTTP 401. Refreshing token...");
                     String newToken = tokenManager.ensureValidAccessToken();
                     requestBuilder.setHeader("Authorization", "Bearer " + newToken);
@@ -70,6 +71,7 @@ public class DriveApiClient {
                 }
 
                 // Retriable
+                closeBodyQuietly(response.body());
                 throw new IOException("Server returned status " + code);
             }
             throw new IOException("HTTP 401 after token refresh");
@@ -98,7 +100,7 @@ public class DriveApiClient {
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     public static String escapeQueryString(String str) {
-        return str != null ? str.replace("\\", "").replace("'", "\\'") : "";
+        return str != null ? str.replace("\\", "").replace("\"", "").replace("'", "\\'") : "";
     }
 
     public static String buildQuery(String format, String... args) {
@@ -114,6 +116,12 @@ public class DriveApiClient {
             SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", code, s);
         } else {
             SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({})", code);
+        }
+    }
+
+    private static void closeBodyQuietly(Object body) {
+        if (body instanceof java.io.InputStream is) {
+            try { is.close(); } catch (Exception ignored) {}
         }
     }
 }

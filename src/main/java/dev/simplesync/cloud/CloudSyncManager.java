@@ -454,6 +454,10 @@ public class CloudSyncManager {
         return CompletableFuture.runAsync(() -> {
             try { task.run(); }
             catch (Throwable t) {
+                if (getStatus() == SyncStatus.AUTHENTICATING) {
+                    SimpleSync.LOGGER.info("[SimpleSync] {} - authentication in progress, keeping AUTHENTICATING status.", errorPrefix);
+                    return;
+                }
                 Throwable cause = t;
                 while (cause.getCause() != null && cause != cause.getCause()) {
                     if (cause instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) break;
