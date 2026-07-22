@@ -77,4 +77,18 @@ public interface CloudProvider {
      * @throws IOException if clearing credentials fails
      */
     void disconnect() throws IOException;
+
+    /**
+     * Synchronizes the schematics directory incrementally.
+     * @param gameRootDir Path to the game root directory
+     * @throws IOException if sync fails
+     */
+    void syncSchematics(Path gameRootDir) throws IOException;
+
+    /**
+     * Synchronizes Masa mod configuration files and directories incrementally.
+     * @param gameRootDir Path to the game root directory
+     * @throws IOException if sync fails
+     */
+    void syncMasaConfigs(Path gameRootDir) throws IOException;
 }

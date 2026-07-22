@@ -67,7 +67,7 @@ public class SyncConfigScreen extends Screen {
                     config.save();
                     button.setMessage(getAutoStartText());
                 })
-                .bounds(centerX - 100, centerY - 70, 200, 20)
+                .bounds(centerX - 100, centerY - 75, 200, 18)
                 .build());
 
         // Auto Sync on Exit Button
@@ -78,14 +78,29 @@ public class SyncConfigScreen extends Screen {
                     config.save();
                     button.setMessage(getAutoExitText());
                 })
-                .bounds(centerX - 100, centerY - 45, 200, 20)
+                .bounds(centerX - 100, centerY - 55, 200, 18)
                 .build());
 
-        // Cloud Worlds Manager Button
+        // Sync Schematics Toggle Button
         this.addRenderableWidget(Button.builder(
-                Component.translatable("simplesync.cloud_worlds.button"),
-                button -> this.minecraft.gui.setScreen(new CloudWorldsScreen(this)))
-                .bounds(centerX - 100, centerY + 22, 200, 20)
+                getSchematicsText(),
+                button -> {
+                    config.syncSchematics = !config.syncSchematics;
+                    config.save();
+                    button.setMessage(getSchematicsText());
+                })
+                .bounds(centerX - 100, centerY - 35, 200, 18)
+                .build());
+
+        // Sync Masa Configs Toggle Button
+        this.addRenderableWidget(Button.builder(
+                getMasaConfigsText(),
+                button -> {
+                    config.syncMasaConfigs = !config.syncMasaConfigs;
+                    config.save();
+                    button.setMessage(getMasaConfigsText());
+                })
+                .bounds(centerX - 100, centerY - 15, 200, 18)
                 .build());
 
         // Google Drive Account Sync/Authentication Button
@@ -115,11 +130,31 @@ public class SyncConfigScreen extends Screen {
                 startAuthenticationFlow();
             }
         })
-        .bounds(centerX - 100, centerY - 3, 200, 20)
+        .bounds(centerX - 100, centerY + 5, 200, 18)
         .build();
 
         connectBtn.active = !authenticating;
         this.addRenderableWidget(connectBtn);
+
+        // Cloud Worlds Manager Button
+        this.addRenderableWidget(Button.builder(
+                Component.translatable("simplesync.cloud_worlds.button"),
+                button -> this.minecraft.gui.setScreen(new CloudWorldsScreen(this)))
+                .bounds(centerX - 100, centerY + 25, 200, 18)
+                .build());
+
+        // Manual Sync Buttons (Schematics / Masa Configs)
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Sync Schematics"),
+                button -> CloudSyncManager.getInstance().syncSchematicsAsync())
+                .bounds(centerX - 100, centerY + 45, 98, 18)
+                .build());
+
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Sync Configs"),
+                button -> CloudSyncManager.getInstance().syncMasaConfigsAsync())
+                .bounds(centerX + 2, centerY + 45, 98, 18)
+                .build());
 
         // Help / Setup Tutorial Button
         this.addRenderableWidget(Button.builder(
@@ -128,14 +163,14 @@ public class SyncConfigScreen extends Screen {
                     showingTutorial = true;
                     this.rebuildWidgets();
                 })
-                .bounds(centerX - 100, centerY + 47, 200, 20)
+                .bounds(centerX - 100, centerY + 65, 200, 18)
                 .build());
 
         // Done button to close and return to previous screen
         this.addRenderableWidget(Button.builder(
                 Component.translatable("gui.done"),
                 button -> this.onClose())
-                .bounds(centerX - 100, centerY + 75, 200, 20)
+                .bounds(centerX - 100, centerY + 85, 200, 18)
                 .build());
     }
 
@@ -187,6 +222,16 @@ public class SyncConfigScreen extends Screen {
         return Component.translatable("simplesync.config.auto_exit", state);
     }
 
+    private Component getSchematicsText() {
+        Component state = Component.translatable(config.syncSchematics ? "options.on" : "options.off");
+        return Component.literal("Schematics: ").append(state);
+    }
+
+    private Component getMasaConfigsText() {
+        Component state = Component.translatable(config.syncMasaConfigs ? "options.on" : "options.off");
+        return Component.literal("Configs Masa: ").append(state);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float delta) {
         super.extractRenderState(extractor, mouseX, mouseY, delta);
@@ -214,9 +259,7 @@ public class SyncConfigScreen extends Screen {
 
         // --- DRAW NORMAL CONFIGURATION OPTIONS SCREEN ---
         extractor.centeredText(this.font,
-                this.title, centerX, 25, 0xFFFFFFFF);
-
-        int centerY = this.height / 2;
+                this.title, centerX, 8, 0xFFFFFFFF);
 
         Component statusTextVal;
         int statusColor;
@@ -233,12 +276,12 @@ public class SyncConfigScreen extends Screen {
         }
 
         Component statusText = Component.translatable("simplesync.config.status", statusTextVal);
-        extractor.centeredText(this.font, statusText, centerX, centerY - 13, statusColor);
+        extractor.centeredText(this.font, statusText, centerX, 21, statusColor);
 
         // Draw authentication errors if any (split into multiple centered lines to avoid overlap)
         if (authError != null) {
             Component errText = Component.translatable("simplesync.config.auth_failed", authError);
-            int currentY = centerY + 100;
+            int currentY = 32;
             for (net.minecraft.util.FormattedCharSequence line : this.font.split(errText, 300)) {
                 extractor.centeredText(this.font, line, centerX, currentY, 0xFFE57373);
                 currentY += 9;

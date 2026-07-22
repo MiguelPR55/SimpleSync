@@ -21,7 +21,7 @@ import org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStr
 
 public class WorldSyncTask {
 
-    private static final int BUFFER_SIZE = 65536;
+    private static final int BUFFER_SIZE = 262144; // 256 KB buffer for max throughput
     private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB — large modded worlds can be very big
 
     private static final String SUFFIX_STAGING = "_staging";

@@ -149,6 +149,10 @@ public class CloudSyncManager {
             } else {
                 clearStatus();
             }
+
+            if (config.syncSchematics || config.syncMasaConfigs) {
+                syncExtraFilesAsync();
+            }
         });
     }
 
@@ -460,6 +464,84 @@ public class CloudSyncManager {
             savesDirectory = Path.of("saves");
         }
         return savesDirectory;
+    }
+
+    public Path getGameRootDir() {
+        Path saves = getSavesDirectory();
+        Path parent = saves.getParent();
+        return parent != null ? parent : Path.of(".");
+    }
+
+    public void syncExtraFilesSync() throws IOException {
+        CloudProvider cloud = getProvider();
+        ensureAuthenticatedOrThrow(cloud, this::syncExtraFilesAsync);
+        SyncConfig config = SyncConfig.load();
+        if (!config.syncSchematics && !config.syncMasaConfigs) {
+            return;
+        }
+
+        String label = (config.syncSchematics && config.syncMasaConfigs) 
+                ? "Schematics & Configs" 
+                : (config.syncSchematics ? "Schematics" : "Configs");
+
+        setStatus(SyncStatus.CHECKING, label);
+        Path gameRoot = getGameRootDir();
+
+        if (config.syncSchematics) {
+            try {
+                cloud.syncSchematics(gameRoot);
+            } catch (Exception e) {
+                SimpleSync.LOGGER.error("[SimpleSync] Schematics sync failed", e);
+            }
+        }
+
+        if (config.syncMasaConfigs) {
+            try {
+                cloud.syncMasaConfigs(gameRoot);
+            } catch (Exception e) {
+                SimpleSync.LOGGER.error("[SimpleSync] Masa configs sync failed", e);
+            }
+        }
+
+        setStatus(SyncStatus.DONE, label);
+    }
+
+    public CompletableFuture<Void> syncExtraFilesAsync() {
+        return runAsyncSafely("Extra files sync failed", "Unknown error", this::syncExtraFilesSync);
+    }
+
+    public void syncSchematicsSync() throws IOException {
+        CloudProvider cloud = getProvider();
+        ensureAuthenticatedOrThrow(cloud, this::syncSchematicsAsync);
+        SyncConfig config = SyncConfig.load();
+        if (!config.syncSchematics) {
+            SimpleSync.LOGGER.info("[SimpleSync] Schematics sync is disabled in config.");
+            return;
+        }
+        setStatus(SyncStatus.CHECKING, "Schematics");
+        cloud.syncSchematics(getGameRootDir());
+        setStatus(SyncStatus.DONE, "Schematics");
+    }
+
+    public CompletableFuture<Void> syncSchematicsAsync() {
+        return runAsyncSafely("Schematics sync failed", "Unknown error", this::syncSchematicsSync);
+    }
+
+    public void syncMasaConfigsSync() throws IOException {
+        CloudProvider cloud = getProvider();
+        ensureAuthenticatedOrThrow(cloud, this::syncMasaConfigsAsync);
+        SyncConfig config = SyncConfig.load();
+        if (!config.syncMasaConfigs) {
+            SimpleSync.LOGGER.info("[SimpleSync] Masa configs sync is disabled in config.");
+            return;
+        }
+        setStatus(SyncStatus.CHECKING, "Masa Configs");
+        cloud.syncMasaConfigs(getGameRootDir());
+        setStatus(SyncStatus.DONE, "Masa Configs");
+    }
+
+    public CompletableFuture<Void> syncMasaConfigsAsync() {
+        return runAsyncSafely("Masa configs sync failed", "Unknown error", this::syncMasaConfigsSync);
     }
 
     private Path getTempDir() throws IOException {

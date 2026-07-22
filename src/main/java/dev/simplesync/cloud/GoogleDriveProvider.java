@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +55,8 @@ public class GoogleDriveProvider implements CloudProvider {
     public GoogleDriveProvider() {
         this.credentialsDir = SyncConfig.getConfigDir().resolve("credentials");
         this.httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(15))
                 .build();
     }
@@ -138,8 +141,9 @@ public class GoogleDriveProvider implements CloudProvider {
         JsonObject metadata = new JsonObject();
         metadata.addProperty("name", fileName);
         if (!isUpdate) {
+            String worldsFolderId = getWorldsFolderId();
             JsonArray parents = new JsonArray();
-            parents.add(simpleSyncFolderId);
+            parents.add(worldsFolderId);
             metadata.add("parents", parents);
         }
 
@@ -323,12 +327,13 @@ public class GoogleDriveProvider implements CloudProvider {
                 throw new IOException("Download failed: HTTP " + response.statusCode());
             }
             try (InputStream is = new ProgressInputStream(response.body(), fileSize, worldName, false);
-                 OutputStream os = Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-                byte[] buffer = new byte[65536];
+                 OutputStream os = new BufferedOutputStream(Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE), 262144)) {
+                byte[] buffer = new byte[262144];
                 int len;
                 while ((len = is.read(buffer)) > 0) {
                     os.write(buffer, 0, len);
                 }
+                os.flush();
             }
         } catch (Exception e) {
             try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
@@ -349,14 +354,15 @@ public class GoogleDriveProvider implements CloudProvider {
         List<WorldMetadata> worlds = new ArrayList<>();
         fileIdCache.clear();
 
-        String query = buildQuery("'%s' in parents and trashed=false", simpleSyncFolderId);
+        String worldsFolderId = getWorldsFolderId();
+        String query = buildQuery("('%s' in parents or '%s' in parents) and trashed=false", worldsFolderId, simpleSyncFolderId);
         java.util.Set<String> seenWorldNames = new java.util.HashSet<>();
         String pageToken = null;
         String accessToken = ensureValidAccessToken();
 
         do {
             String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query)
-                    + "&fields=nextPageToken,files(id,name,modifiedTime,size)&pageSize=1000"
+                    + "&fields=nextPageToken,files(id,name,parents,modifiedTime,size)&pageSize=1000"
                     + "&orderBy=modifiedTime%20desc"
                     + (pageToken != null ? "&pageToken=" + RetryUtil.urlEncode(pageToken) : "");
 
@@ -377,6 +383,10 @@ public class GoogleDriveProvider implements CloudProvider {
 
             for (int i = 0; i < files.size(); i++) {
                 JsonObject file = files.get(i).getAsJsonObject();
+                String mimeType = file.has("mimeType") ? file.get("mimeType").getAsString() : "";
+                if ("application/vnd.google-apps.folder".equals(mimeType)) {
+                    continue;
+                }
                 String fileName = file.has("name") ? file.get("name").getAsString() : null;
                 if (fileName == null || (!fileName.endsWith(".tar.zst") && !fileName.endsWith(".zip"))) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Ignoring Google Drive file with unexpected name: {}", fileName);
@@ -393,6 +403,15 @@ public class GoogleDriveProvider implements CloudProvider {
                 String fileId = file.has("id") ? file.get("id").getAsString() : null;
                 if (fileId != null) {
                     fileIdCache.put(fileName, java.util.Optional.of(fileId));
+                    if (file.has("parents")) {
+                        JsonArray parents = file.getAsJsonArray("parents");
+                        for (int p = 0; p < parents.size(); p++) {
+                            if (simpleSyncFolderId.equals(parents.get(p).getAsString())) {
+                                moveFileToFolder(accessToken, fileId, simpleSyncFolderId, worldsFolderId);
+                                break;
+                            }
+                        }
+                    }
                 }
                 if (seenWorldNames.contains(worldName)) {
                     continue; 
@@ -503,6 +522,366 @@ public class GoogleDriveProvider implements CloudProvider {
         }
         TokenStore.clear();
         SimpleSync.LOGGER.info("[SimpleSync] Disconnected from Google Drive and cleared stored credentials");
+    }
+
+    // ─── Subfolder & Incremental Sync ─────────────────────────────────────────
+
+    public synchronized String getOrCreateSubfolder(String parentFolderId, String folderName) throws IOException {
+        String accessToken = ensureValidAccessToken();
+        String query = buildQuery("name='%s' and '%s' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false", folderName, parentFolderId);
+        String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&pageSize=1";
+
+        HttpRequest.Builder searchReqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30)).GET();
+        HttpResponse<String> searchResp = sendWithRetry(searchReqBuilder, 3);
+        if (searchResp.statusCode() == 200) {
+            JsonObject body = JsonParser.parseString(searchResp.body()).getAsJsonObject();
+            JsonArray files = body.getAsJsonArray("files");
+            if (files != null && files.size() > 0) {
+                return files.get(0).getAsJsonObject().get("id").getAsString();
+            }
+        }
+
+        JsonObject folderMeta = new JsonObject();
+        folderMeta.addProperty("name", folderName);
+        folderMeta.addProperty("mimeType", "application/vnd.google-apps.folder");
+        JsonArray parents = new JsonArray();
+        parents.add(parentFolderId);
+        folderMeta.add("parents", parents);
+
+        HttpRequest.Builder createReqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files?fields=id", Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofString(folderMeta.toString()))
+                .header("Content-Type", "application/json; charset=UTF-8");
+
+        HttpResponse<String> createResp = sendWithRetry(createReqBuilder, 3);
+        if (createResp.statusCode() == 200 || createResp.statusCode() == 201) {
+            JsonObject folder = JsonParser.parseString(createResp.body()).getAsJsonObject();
+            return folder.get("id").getAsString();
+        }
+        throw new IOException("Failed to create folder '" + folderName + "': HTTP " + createResp.statusCode() + " - " + createResp.body());
+    }
+
+    public String getWorldsFolderId() throws IOException {
+        ensureSimpleSyncFolder();
+        SyncConfig config = SyncConfig.load();
+        if (config.worldsFolderId != null && isSafeDriveFileId(config.worldsFolderId)) {
+            return config.worldsFolderId;
+        }
+        String id = getOrCreateSubfolder(simpleSyncFolderId, "Worlds");
+        config.worldsFolderId = id;
+        config.save();
+        return id;
+    }
+
+    public String getSchematicsFolderId() throws IOException {
+        ensureSimpleSyncFolder();
+        SyncConfig config = SyncConfig.load();
+        if (config.schematicsFolderId != null && isSafeDriveFileId(config.schematicsFolderId)) {
+            return config.schematicsFolderId;
+        }
+        String id = getOrCreateSubfolder(simpleSyncFolderId, "Schematics");
+        config.schematicsFolderId = id;
+        config.save();
+        return id;
+    }
+
+    public String getConfigsFolderId() throws IOException {
+        ensureSimpleSyncFolder();
+        SyncConfig config = SyncConfig.load();
+        if (config.configsFolderId != null && isSafeDriveFileId(config.configsFolderId)) {
+            return config.configsFolderId;
+        }
+        String id = getOrCreateSubfolder(simpleSyncFolderId, "Configs");
+        config.configsFolderId = id;
+        config.save();
+        return id;
+    }
+
+    @Override
+    public void syncSchematics(Path gameRootDir) throws IOException {
+        Path schematicsDir = gameRootDir.resolve("schematics");
+        Files.createDirectories(schematicsDir);
+        String remoteFolderId = getSchematicsFolderId();
+        List<dev.simplesync.sync.FolderSyncTask.LocalFileInfo> localFiles = dev.simplesync.sync.FolderSyncTask.scanLocalDirectory(schematicsDir);
+        syncDirectoryIncremental(remoteFolderId, schematicsDir, localFiles);
+    }
+
+    @Override
+    public void syncMasaConfigs(Path gameRootDir) throws IOException {
+        String remoteFolderId = getConfigsFolderId();
+        List<dev.simplesync.sync.FolderSyncTask.LocalFileInfo> localFiles = dev.simplesync.sync.FolderSyncTask.scanMasaConfigFiles(gameRootDir);
+        syncDirectoryIncremental(remoteFolderId, gameRootDir, localFiles);
+    }
+
+    private record DriveItem(String id, String name, String parentId, String mimeType, long modifiedTime, long size) {}
+
+    private void syncDirectoryIncremental(String rootRemoteFolderId, Path localBaseDir, List<dev.simplesync.sync.FolderSyncTask.LocalFileInfo> localFiles) throws IOException {
+        String accessToken = ensureValidAccessToken();
+        List<DriveItem> allRemoteItems = listAllDriveItemsUnder(accessToken, rootRemoteFolderId);
+
+        List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
+        dev.simplesync.sync.FolderSyncTask.SyncPlan plan = dev.simplesync.sync.FolderSyncTask.createSyncPlan(localFiles, remoteFiles);
+
+        Map<String, String> folderPathToIdMap = reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId);
+        folderPathToIdMap.put("", rootRemoteFolderId);
+
+        for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
+            uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+        }
+
+        for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
+            downloadSingleFileIncremental(accessToken, localBaseDir, remote);
+        }
+    }
+
+    private void moveFileToFolder(String accessToken, String fileId, String fromFolderId, String toFolderId) {
+        try {
+            String url = "https://www.googleapis.com/drive/v3/files/" + fileId
+                    + "?addParents=" + RetryUtil.urlEncode(toFolderId)
+                    + "&removeParents=" + RetryUtil.urlEncode(fromFolderId)
+                    + "&fields=id,parents";
+            HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(15))
+                    .method("PATCH", HttpRequest.BodyPublishers.noBody());
+            sendWithRetry(reqBuilder, 2);
+            SimpleSync.LOGGER.info("[SimpleSync] Auto-migrated world file {} to Worlds subfolder in Google Drive", fileId);
+        } catch (Exception e) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Failed to auto-migrate file {} to Worlds subfolder: {}", fileId, e.getMessage());
+        }
+    }
+
+    private List<DriveItem> listAllDriveItemsUnder(String accessToken, String rootFolderId) throws IOException {
+        List<DriveItem> result = new ArrayList<>();
+        List<String> currentLevelFolderIds = List.of(rootFolderId);
+        java.util.Set<String> visitedFolderIds = new java.util.HashSet<>();
+        visitedFolderIds.add(rootFolderId);
+
+        while (!currentLevelFolderIds.isEmpty()) {
+            List<String> nextLevelFolderIds = new ArrayList<>();
+
+            for (int i = 0; i < currentLevelFolderIds.size(); i += 30) {
+                List<String> chunk = currentLevelFolderIds.subList(i, Math.min(i + 30, currentLevelFolderIds.size()));
+                StringBuilder queryBuilder = new StringBuilder("(");
+                for (int j = 0; j < chunk.size(); j++) {
+                    if (j > 0) queryBuilder.append(" or ");
+                    queryBuilder.append("'").append(escapeQueryString(chunk.get(j))).append("' in parents");
+                }
+                queryBuilder.append(") and trashed=false");
+
+                String pageToken = null;
+                do {
+                    String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(queryBuilder.toString())
+                            + "&fields=nextPageToken,files(id,name,parents,mimeType,modifiedTime,size)&pageSize=1000"
+                            + (pageToken != null ? "&pageToken=" + RetryUtil.urlEncode(pageToken) : "");
+
+                    HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30)).GET();
+                    HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+                    if (response.statusCode() != 200) {
+                        throw new IOException("Failed to list batch items: HTTP " + response.statusCode());
+                    }
+
+                    JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+                    JsonArray files = body.getAsJsonArray("files");
+                    if (files != null) {
+                        for (int k = 0; k < files.size(); k++) {
+                            JsonObject f = files.get(k).getAsJsonObject();
+                            String id = f.get("id").getAsString();
+                            String name = f.get("name").getAsString();
+                            String mimeType = f.has("mimeType") ? f.get("mimeType").getAsString() : "";
+                            long mtime = f.has("modifiedTime") ? java.time.Instant.parse(f.get("modifiedTime").getAsString()).toEpochMilli() : System.currentTimeMillis();
+                            long size = f.has("size") ? f.get("size").getAsLong() : 0L;
+
+                            String parentId = rootFolderId;
+                            if (f.has("parents")) {
+                                JsonArray parents = f.getAsJsonArray("parents");
+                                if (parents.size() > 0) {
+                                    parentId = parents.get(0).getAsString();
+                                }
+                            }
+
+                            result.add(new DriveItem(id, name, parentId, mimeType, mtime, size));
+                            if ("application/vnd.google-apps.folder".equals(mimeType)) {
+                                if (visitedFolderIds.add(id)) {
+                                    nextLevelFolderIds.add(id);
+                                }
+                            }
+                        }
+                    }
+                    pageToken = body.has("nextPageToken") ? body.get("nextPageToken").getAsString() : null;
+                } while (pageToken != null);
+            }
+
+            currentLevelFolderIds = nextLevelFolderIds;
+        }
+
+        return result;
+    }
+
+    private List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> reconstructRemoteFileInfos(List<DriveItem> items, String rootFolderId) {
+        Map<String, DriveItem> itemMap = new HashMap<>();
+        for (DriveItem item : items) {
+            itemMap.put(item.id(), item);
+        }
+
+        List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> result = new ArrayList<>();
+        for (DriveItem item : items) {
+            if ("application/vnd.google-apps.folder".equals(item.mimeType())) {
+                continue;
+            }
+            String relPath = buildRelativePath(item, itemMap, rootFolderId);
+            if (relPath != null) {
+                result.add(new dev.simplesync.sync.FolderSyncTask.RemoteFileInfo(relPath, item.id(), item.modifiedTime(), item.size()));
+            }
+        }
+        return result;
+    }
+
+    private Map<String, String> reconstructRemoteFolderMap(List<DriveItem> items, String rootFolderId) {
+        Map<String, DriveItem> itemMap = new HashMap<>();
+        for (DriveItem item : items) {
+            itemMap.put(item.id(), item);
+        }
+
+        Map<String, String> result = new HashMap<>();
+        for (DriveItem item : items) {
+            if ("application/vnd.google-apps.folder".equals(item.mimeType())) {
+                String relPath = buildRelativePath(item, itemMap, rootFolderId);
+                if (relPath != null) {
+                    result.put(relPath, item.id());
+                }
+            }
+        }
+        return result;
+    }
+
+    private String buildRelativePath(DriveItem item, Map<String, DriveItem> itemMap, String rootFolderId) {
+        List<String> parts = new ArrayList<>();
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        DriveItem curr = item;
+        while (curr != null && !curr.id().equals(rootFolderId)) {
+            if (!visited.add(curr.id())) {
+                return null;
+            }
+            parts.add(0, curr.name());
+            String parentId = curr.parentId();
+            if (parentId == null || parentId.equals(rootFolderId)) {
+                break;
+            }
+            curr = itemMap.get(parentId);
+        }
+        return String.join("/", parts);
+    }
+
+    private void uploadSingleFileIncremental(String accessToken, String rootFolderId, Path localBaseDir, dev.simplesync.sync.FolderSyncTask.LocalFileInfo local, Map<String, String> folderPathToIdMap, List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> remoteFiles) throws IOException {
+        String relPath = local.relativePath();
+        int lastSlash = relPath.lastIndexOf('/');
+        String parentRelPath = lastSlash > 0 ? relPath.substring(0, lastSlash) : "";
+        String fileName = lastSlash >= 0 ? relPath.substring(lastSlash + 1) : relPath;
+
+        String parentFolderId = resolveOrCreateRemoteFolderPath(parentRelPath, rootFolderId, folderPathToIdMap);
+
+        String existingFileId = null;
+        for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : remoteFiles) {
+            if (remote.relativePath().equals(relPath)) {
+                existingFileId = remote.fileId();
+                break;
+            }
+        }
+
+        if (existingFileId != null) {
+            String url = "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=media";
+            HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(60))
+                    .method("PATCH", HttpRequest.BodyPublishers.ofFile(local.fullPath()))
+                    .header("Content-Type", "application/octet-stream");
+            HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+            if (response.statusCode() != 200) {
+                throw new IOException("Failed to update file " + relPath + ": HTTP " + response.statusCode());
+            }
+        } else {
+            byte[] fileBytes = Files.readAllBytes(local.fullPath());
+            String url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+            String boundary = "SimpleSyncBoundary" + System.currentTimeMillis();
+
+            JsonObject meta = new JsonObject();
+            meta.addProperty("name", fileName);
+            JsonArray parents = new JsonArray();
+            parents.add(parentFolderId);
+            meta.add("parents", parents);
+
+            byte[] bodyBytes = buildMultipartBody(boundary, meta.toString(), fileBytes);
+
+            HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(60))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
+                    .header("Content-Type", "multipart/related; boundary=" + boundary);
+
+            HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+            if (response.statusCode() != 200 && response.statusCode() != 201) {
+                throw new IOException("Failed to upload new file " + relPath + ": HTTP " + response.statusCode());
+            }
+        }
+    }
+
+    private String resolveOrCreateRemoteFolderPath(String relFolderPath, String rootFolderId, Map<String, String> folderMap) throws IOException {
+        if (relFolderPath == null || relFolderPath.isEmpty()) {
+            return rootFolderId;
+        }
+        if (folderMap.containsKey(relFolderPath)) {
+            return folderMap.get(relFolderPath);
+        }
+
+        String[] parts = relFolderPath.split("/");
+        String currentRel = "";
+        String currentParentId = rootFolderId;
+
+        for (String part : parts) {
+            currentRel = currentRel.isEmpty() ? part : currentRel + "/" + part;
+            if (folderMap.containsKey(currentRel)) {
+                currentParentId = folderMap.get(currentRel);
+            } else {
+                currentParentId = getOrCreateSubfolder(currentParentId, part);
+                folderMap.put(currentRel, currentParentId);
+            }
+        }
+        return currentParentId;
+    }
+
+    private byte[] buildMultipartBody(String boundary, String jsonMeta, byte[] fileBytes) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        String header1 = "--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + jsonMeta + "\r\n";
+        String header2 = "--" + boundary + "\r\nContent-Type: application/octet-stream\r\n\r\n";
+        String footer = "\r\n--" + boundary + "--\r\n";
+
+        baos.write(header1.getBytes(StandardCharsets.UTF_8));
+        baos.write(header2.getBytes(StandardCharsets.UTF_8));
+        baos.write(fileBytes);
+        baos.write(footer.getBytes(StandardCharsets.UTF_8));
+        return baos.toByteArray();
+    }
+
+    private void downloadSingleFileIncremental(String accessToken, Path localBaseDir, dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote) throws IOException {
+        Path targetFile = localBaseDir.resolve(remote.relativePath()).normalize();
+        Path normalizedBase = localBaseDir.normalize();
+        if (!targetFile.startsWith(normalizedBase)) {
+            throw new SecurityException("Security violation: path traversal detected in remote file path: " + remote.relativePath());
+        }
+        Files.createDirectories(targetFile.getParent());
+
+        String url = "https://www.googleapis.com/drive/v3/files/" + remote.fileId() + "?alt=media";
+        HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(60)).GET();
+        HttpResponse<InputStream> response = sendWithRetry(reqBuilder, HttpResponse.BodyHandlers.ofInputStream(), 3);
+
+        if (response.statusCode() != 200) {
+            throw new IOException("Failed to download file " + remote.relativePath() + ": HTTP " + response.statusCode());
+        }
+
+        try (InputStream is = response.body();
+             OutputStream os = Files.newOutputStream(targetFile, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+            is.transferTo(os);
+        }
+
+        if (remote.lastModified() > 0) {
+            try {
+                Files.setLastModifiedTime(targetFile, java.nio.file.attribute.FileTime.fromMillis(remote.lastModified()));
+            } catch (IOException ignored) {}
+        }
     }
 
     // ─── Private Helpers ────────────────────────────────────────────────────
@@ -710,9 +1089,10 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         ensureSimpleSyncFolder();
+        String worldsFolderId = getWorldsFolderId();
         String accessToken = ensureValidAccessToken();
 
-        String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
+        String query = buildQuery("name='%s' and ('%s' in parents or '%s' in parents) and trashed=false", fileName, worldsFolderId, simpleSyncFolderId);
         String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
         HttpRequest.Builder requestBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30))
