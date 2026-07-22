@@ -1,18 +1,16 @@
 package dev.simplesync;
 
 import dev.simplesync.cloud.CloudSyncManager;
+import dev.simplesync.config.SyncConfig;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
-import dev.simplesync.config.SyncConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
-import java.util.Locale;
-
 public class SimpleSync implements ModInitializer {
+
     public static final String MOD_ID = "simplesync";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
@@ -25,26 +23,22 @@ public class SimpleSync implements ModInitializer {
         preloadClasses();
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
-            if (isIntegratedServer(server)) {
-                lastWorldName = server.getWorldPath(LevelResource.ROOT)
-                        .normalize().getFileName().toString();
+            if (!server.isDedicatedServer()) {
+                lastWorldName = server.getWorldPath(LevelResource.ROOT).normalize().getFileName().toString();
                 LOGGER.info("[SimpleSync] World starting: {}", lastWorldName);
             }
         });
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            if (isIntegratedServer(server) && lastWorldName != null) {
-                needsTitleScreenSync = true;
-                SyncConfig config = SyncConfig.load();
-                if (config.autoSyncOnExit) {
-                    LOGGER.info("[SimpleSync] World stopped: {}. Triggering upload...", lastWorldName);
-                    CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
-                } else {
-                    LOGGER.info("[SimpleSync] World stopped: {}, but autoSyncOnExit is disabled. Skipping auto-upload.", lastWorldName);
-                }
-                if (config.syncSchematics || config.syncMasaConfigs) {
-                    CloudSyncManager.getInstance().syncExtraFilesAsync();
-                }
+            if (server.isDedicatedServer() || lastWorldName == null) return;
+            needsTitleScreenSync = true;
+            SyncConfig config = SyncConfig.load();
+            if (config.autoSyncOnExit) {
+                LOGGER.info("[SimpleSync] World stopped: {}. Uploading...", lastWorldName);
+                CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
+            }
+            if (config.syncSchematics || config.syncMasaConfigs) {
+                CloudSyncManager.getInstance().syncExtraFilesAsync();
             }
         });
     }
@@ -58,6 +52,7 @@ public class SimpleSync implements ModInitializer {
             "dev.simplesync.cloud.CloudSyncManager",
             "dev.simplesync.util.RetryUtil",
             "dev.simplesync.sync.WorldSyncTask",
+            "dev.simplesync.sync.WorldArchiver",
             "dev.simplesync.sync.WorldMetadata",
             "dev.simplesync.sync.StatusSnapshot",
             "dev.simplesync.sync.SyncStatus",
@@ -66,31 +61,10 @@ public class SimpleSync implements ModInitializer {
             "dev.simplesync.shadow.org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStream"
         };
         for (String cls : classes) {
-            try {
-                Class.forName(cls, true, SimpleSync.class.getClassLoader());
-            } catch (ClassNotFoundException e) {
-                LOGGER.warn("[SimpleSync] Preloading failed for class: {}", cls);
-            }
+            try { Class.forName(cls, true, SimpleSync.class.getClassLoader()); }
+            catch (ClassNotFoundException e) { LOGGER.warn("[SimpleSync] Preload failed: {}", cls); }
         }
     }
 
-    private static boolean isIntegratedServer(MinecraftServer server) {
-        return !server.isDedicatedServer();
-    }
-
-    public static String getLastWorldName() {
-        return lastWorldName;
-    }
-
-    public static boolean openUrl(String url) {
-        return dev.simplesync.util.DesktopUtil.openUrl(url);
-    }
-
-    public static boolean openUriRobust(URI uri) {
-        return dev.simplesync.util.DesktopUtil.openUriRobust(uri);
-    }
-
-    public static boolean openFileRobust(java.io.File file) {
-        return dev.simplesync.util.DesktopUtil.openFileRobust(file);
-    }
+    public static String getLastWorldName() { return lastWorldName; }
 }

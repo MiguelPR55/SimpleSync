@@ -332,7 +332,7 @@ public class SyncConfigScreen extends Screen {
             int step8Width = this.font.width(Component.translatable("simplesync.tutorial.step8"));
             if (event.y() >= (startY + stepGap * 7) - 4 && event.y() <= (startY + stepGap * 7) + 13
                     && event.x() >= centerX - step8Width / 2 && event.x() <= centerX + step8Width / 2) {
-                dev.simplesync.SimpleSync.openFileRobust(dev.simplesync.config.SyncConfig.getConfigDir().toFile());
+                dev.simplesync.util.DesktopUtil.openFileRobust(dev.simplesync.config.SyncConfig.getConfigDir().toFile());
                 return true;
             }
         }
@@ -342,7 +342,7 @@ public class SyncConfigScreen extends Screen {
     public static void confirmAndOpenUrl(net.minecraft.client.gui.screens.Screen parent, String url) {
         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new net.minecraft.client.gui.screens.ConfirmLinkScreen(confirmed -> {
             if (confirmed) {
-                dev.simplesync.SimpleSync.openUrl(url);
+                dev.simplesync.util.DesktopUtil.openUrl(url);
             }
             net.minecraft.client.Minecraft.getInstance().gui.setScreen(parent);
         }, url, true));
