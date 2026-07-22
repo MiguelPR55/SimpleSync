@@ -69,12 +69,7 @@ public class SyncConflictScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(
                         Component.translatable("simplesync.conflict.cancel"),
-                        button -> {
-                            if (resolved.compareAndSet(false, true)) {
-                                onKeepLocal.run();
-                                this.onClose();
-                            }
-                        })
+                        button -> this.onClose())
                 .bounds(centerX - 100, buttonY + 30, 200, 20)
                 .build());
     }

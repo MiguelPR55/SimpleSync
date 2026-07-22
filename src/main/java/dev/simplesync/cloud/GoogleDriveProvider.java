@@ -129,6 +129,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 "('%s' in parents or '%s' in parents) and trashed=false", worldsFolderId, rootId);
 
         Set<String> seenNames = new HashSet<>();
+        List<String> idsToMigrate = new ArrayList<>();
         String pageToken = null;
 
         do {
@@ -162,12 +163,12 @@ public class GoogleDriveProvider implements CloudProvider {
                 String fileId = file.has("id") ? file.get("id").getAsString() : null;
                 if (fileId != null) {
                     folders.cacheFileId(fileName, fileId);
-                    // Auto-migrate files in root to Worlds subfolder
+                    // Collect files in root to auto-migrate to Worlds subfolder after pagination
                     if (file.has("parents")) {
                         JsonArray parents = file.getAsJsonArray("parents");
                         for (int p = 0; p < parents.size(); p++) {
                             if (rootId.equals(parents.get(p).getAsString())) {
-                                moveFileToFolder(fileId, rootId, worldsFolderId);
+                                idsToMigrate.add(fileId);
                                 break;
                             }
                         }
@@ -185,6 +186,14 @@ public class GoogleDriveProvider implements CloudProvider {
 
             pageToken = body.has("nextPageToken") ? body.get("nextPageToken").getAsString() : null;
         } while (pageToken != null);
+
+        for (String fileId : idsToMigrate) {
+            try {
+                moveFileToFolder(fileId, rootId, worldsFolderId);
+            } catch (Exception e) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Failed to auto-migrate file {} to Worlds folder", fileId, e);
+            }
+        }
 
         return worlds;
     }
@@ -271,9 +280,27 @@ public class GoogleDriveProvider implements CloudProvider {
         if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
             if (isUpdate && initResp.statusCode() == 404) {
                 folders.removeCachedFileId(fileName);
-                return uploadOnce(worldName, archiveFile);
+                // Fall back to creating a new file without recursive calls
+                isUpdate = false;
+                initUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
+                metadata = new JsonObject();
+                metadata.addProperty("name", fileName);
+                JsonArray parents = new JsonArray();
+                parents.add(folders.getWorldsFolderId());
+                metadata.add("parents", parents);
+
+                initReq = api.authedRequest(initUrl, Duration.ofSeconds(30))
+                        .POST(HttpRequest.BodyPublishers.ofString(metadata.toString()))
+                        .header("Content-Type", "application/json; charset=UTF-8")
+                        .header("X-Upload-Content-Type", mimeType)
+                        .header("X-Upload-Content-Length", String.valueOf(fileSize));
+                initResp = api.send(initReq, 3);
+                if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
+                    throw new IOException("Resumable upload init failed after 404 fallback: HTTP " + initResp.statusCode());
+                }
+            } else {
+                throw new IOException("Resumable upload init failed: HTTP " + initResp.statusCode());
             }
-            throw new IOException("Resumable upload init failed: HTTP " + initResp.statusCode());
         }
 
         Optional<String> location = initResp.headers().firstValue("Location");

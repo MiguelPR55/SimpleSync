@@ -211,7 +211,10 @@ public class SyncConfigScreen extends Screen {
             } else {
                 authError = null;
             }
-            if (this.minecraft.gui.screen() instanceof dev.simplesync.ui.DeviceAuthScreen) {
+            if (this.minecraft.gui.screen() instanceof dev.simplesync.ui.DeviceAuthScreen authScreen) {
+                if (success) {
+                    authScreen.markAuthSucceeded();
+                }
                 this.minecraft.gui.setScreen(this);
             }
             this.rebuildWidgets();

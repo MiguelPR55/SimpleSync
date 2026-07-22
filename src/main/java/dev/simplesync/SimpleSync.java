@@ -24,8 +24,14 @@ public class SimpleSync implements ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             if (!server.isDedicatedServer()) {
-                lastWorldName = server.getWorldPath(LevelResource.ROOT).normalize().getFileName().toString();
-                LOGGER.info("[SimpleSync] World starting: {}", lastWorldName);
+                String name = server.getWorldPath(LevelResource.ROOT).normalize().getFileName().toString();
+                if (dev.simplesync.sync.WorldSyncTask.isWorldNameSafe(name)) {
+                    lastWorldName = name;
+                    LOGGER.info("[SimpleSync] World starting: {}", lastWorldName);
+                } else {
+                    LOGGER.warn("[SimpleSync] World folder name '{}' is unsafe for cloud sync. Skipping auto-sync.", name);
+                    lastWorldName = null;
+                }
             }
         });
 

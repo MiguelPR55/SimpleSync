@@ -20,14 +20,14 @@ public class TitleScreenMixin {
     private void onInit(CallbackInfo ci) {
         if (SimpleSync.needsTitleScreenSync) {
             SimpleSync.needsTitleScreenSync = false;
-            java.util.concurrent.CompletableFuture.runAsync(() -> {
-                dev.simplesync.sync.WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
-            }, CloudSyncManager.getInstance().getExecutor());
-
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnStart) {
                 SimpleSync.LOGGER.info("[SimpleSync] Title screen opened, starting cloud sync...");
                 CloudSyncManager.getInstance().syncAllWorldsFromCloud();
+            } else {
+                java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    dev.simplesync.sync.WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
+                }, CloudSyncManager.getInstance().getExecutor());
             }
         }
     }

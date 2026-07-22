@@ -130,6 +130,10 @@ public class DeviceAuthScreen extends Screen {
         return super.mouseClicked(event, doubleClick);
     }
 
+    public void markAuthSucceeded() {
+        this.resolved.set(true);
+    }
+
     @Override
     public void onClose() {
         if (resolved.compareAndSet(false, true) && onCancel != null) {
