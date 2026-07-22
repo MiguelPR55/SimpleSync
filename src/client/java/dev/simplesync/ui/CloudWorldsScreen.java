@@ -35,6 +35,9 @@ public class CloudWorldsScreen extends Screen {
     private int currentPage = 0;
     private static final int ITEMS_PER_PAGE = 5;
 
+    private final java.util.Map<String, Boolean> installedCache = new java.util.HashMap<>();
+    private long lastCacheRefresh = 0;
+
     public CloudWorldsScreen(Screen parent) {
         super(Component.translatable("simplesync.cloud_worlds.title"));
         this.parent = parent;
@@ -202,12 +205,18 @@ public class CloudWorldsScreen extends Screen {
         SyncConfig config = SyncConfig.load();
         SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy HH:mm");
 
+        long now = System.currentTimeMillis();
+        if (now - lastCacheRefresh > 2000) {
+            installedCache.clear();
+            lastCacheRefresh = now;
+        }
+
         for (int i = startIdx; i < endIdx; i++) {
             WorldMetadata meta = this.cloudWorlds.get(i);
             int rowY = 45 + (i - startIdx) * 30;
 
             Path worldFolder = savesDir.resolve(meta.worldName()).normalize();
-            boolean isInstalled = Files.isDirectory(worldFolder);
+            boolean isInstalled = installedCache.computeIfAbsent(meta.worldName(), k -> Files.isDirectory(worldFolder));
             boolean isIgnored = config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(meta.worldName());
 
             // Draw world name

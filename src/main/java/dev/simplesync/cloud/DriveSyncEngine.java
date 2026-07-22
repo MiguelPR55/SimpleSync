@@ -77,7 +77,6 @@ public class DriveSyncEngine {
                         long now = System.currentTimeMillis();
                         synchronized (config) {
                             config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
-                            config.save();
                         }
                     } catch (IOException e) {
                         throw new java.io.UncheckedIOException(e);
@@ -93,7 +92,6 @@ public class DriveSyncEngine {
                         long localMtime = remote.lastModified() > 0 ? remote.lastModified() : now;
                         synchronized (config) {
                             config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
-                            config.save();
                         }
                     } catch (IOException e) {
                         throw new java.io.UncheckedIOException(e);
@@ -102,7 +100,9 @@ public class DriveSyncEngine {
             }
 
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            config.save();
         } catch (CompletionException ce) {
+            config.save();
             if (ce.getCause() instanceof java.io.UncheckedIOException uioe) {
                 throw uioe.getCause();
             }
@@ -138,25 +138,59 @@ public class DriveSyncEngine {
                 throw new IOException("Failed to update file " + relPath + ": HTTP " + resp.statusCode());
             }
         } else {
-            byte[] fileBytes = Files.readAllBytes(local.fullPath());
-            String boundary = "SimpleSyncBoundary" + System.currentTimeMillis();
+            if (local.size() > 5L * 1024 * 1024) {
+                // Resumable streaming upload for larger files
+                String initUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
+                JsonObject meta = new JsonObject();
+                meta.addProperty("name", fileName);
+                JsonArray parents = new JsonArray();
+                parents.add(parentFolderId);
+                meta.add("parents", parents);
 
-            JsonObject meta = new JsonObject();
-            meta.addProperty("name", fileName);
-            JsonArray parents = new JsonArray();
-            parents.add(parentFolderId);
-            meta.add("parents", parents);
+                HttpRequest.Builder initReq = api.authedRequest(initUrl, Duration.ofSeconds(30))
+                        .POST(HttpRequest.BodyPublishers.ofString(meta.toString()))
+                        .header("Content-Type", "application/json; charset=UTF-8")
+                        .header("X-Upload-Content-Type", "application/octet-stream")
+                        .header("X-Upload-Content-Length", String.valueOf(local.size()));
 
-            byte[] bodyBytes = DriveApiClient.buildMultipartBody(boundary, meta.toString(), fileBytes);
+                HttpResponse<String> initResp = api.send(initReq, 3);
+                if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
+                    throw new IOException("Failed to init resumable upload for " + relPath + ": HTTP " + initResp.statusCode());
+                }
 
-            HttpRequest.Builder req = api.authedRequest(
-                    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", Duration.ofSeconds(60))
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
-                    .header("Content-Type", "multipart/related; boundary=" + boundary);
+                Optional<String> location = initResp.headers().firstValue("Location");
+                if (location.isEmpty()) throw new IOException("No Location header for resumable upload of " + relPath);
 
-            HttpResponse<String> resp = api.send(req, 3);
-            if (resp.statusCode() != 200 && resp.statusCode() != 201) {
-                throw new IOException("Failed to upload new file " + relPath + ": HTTP " + resp.statusCode());
+                HttpRequest.Builder putReq = HttpRequest.newBuilder(java.net.URI.create(location.get()))
+                        .PUT(HttpRequest.BodyPublishers.ofFile(local.fullPath()))
+                        .timeout(Duration.ofMinutes(15))
+                        .header("Content-Type", "application/octet-stream");
+
+                HttpResponse<String> putResp = api.send(putReq, 3);
+                if (putResp.statusCode() != 200 && putResp.statusCode() != 201) {
+                    throw new IOException("Failed to upload new file " + relPath + ": HTTP " + putResp.statusCode());
+                }
+            } else {
+                byte[] fileBytes = Files.readAllBytes(local.fullPath());
+                String boundary = "SimpleSyncBoundary" + System.currentTimeMillis();
+
+                JsonObject meta = new JsonObject();
+                meta.addProperty("name", fileName);
+                JsonArray parents = new JsonArray();
+                parents.add(parentFolderId);
+                meta.add("parents", parents);
+
+                byte[] bodyBytes = DriveApiClient.buildMultipartBody(boundary, meta.toString(), fileBytes);
+
+                HttpRequest.Builder req = api.authedRequest(
+                        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", Duration.ofSeconds(60))
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
+                        .header("Content-Type", "multipart/related; boundary=" + boundary);
+
+                HttpResponse<String> resp = api.send(req, 3);
+                if (resp.statusCode() != 200 && resp.statusCode() != 201) {
+                    throw new IOException("Failed to upload new file " + relPath + ": HTTP " + resp.statusCode());
+                }
             }
         }
     }

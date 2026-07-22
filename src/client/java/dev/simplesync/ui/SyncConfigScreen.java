@@ -23,6 +23,7 @@ public class SyncConfigScreen extends Screen {
     private boolean showingTutorial = false;
     private boolean authenticating = false;
     private boolean authenticated = false;
+    private Boolean cachedAuthStatus = null;
     private String authError = null;
 
     public SyncConfigScreen(Screen parent) {
@@ -104,7 +105,10 @@ public class SyncConfigScreen extends Screen {
                 .build());
 
         // Google Drive Account Sync/Authentication Button
-        authenticated = !authenticating && CloudSyncManager.getInstance().getProvider().isAuthenticated();
+        if (cachedAuthStatus == null) {
+            cachedAuthStatus = !authenticating && CloudSyncManager.getInstance().getProvider().isAuthenticated();
+        }
+        authenticated = !authenticating && cachedAuthStatus;
         
         Component authBtnText;
         if (authenticating) {
@@ -119,6 +123,7 @@ public class SyncConfigScreen extends Screen {
             if (authenticated) {
                 try {
                     CloudSyncManager.getInstance().getProvider().disconnect();
+                    cachedAuthStatus = false;
                     authenticated = false;
                     authError = null;
                 } catch (IOException e) {
@@ -193,6 +198,7 @@ public class SyncConfigScreen extends Screen {
     private void onAuthenticationComplete(boolean success, Exception e) {
         if (this.minecraft == null) return;
         this.minecraft.execute(() -> {
+            cachedAuthStatus = success;
             authenticating = false;
             authenticated = success;
             if (!success && e != null) {

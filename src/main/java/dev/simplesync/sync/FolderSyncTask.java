@@ -88,7 +88,7 @@ public class FolderSyncTask {
             Path dir = gameRootDir.resolve(relDirPath);
             if (Files.isDirectory(dir)) {
                 try (Stream<Path> stream = Files.walk(dir)) {
-                    stream.parallel().filter(Files::isRegularFile).forEach(path -> {
+                    stream.filter(Files::isRegularFile).forEach(path -> {
                         String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                         if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
                             return;

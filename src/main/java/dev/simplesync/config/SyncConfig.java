@@ -20,7 +20,7 @@ public class SyncConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CONFIG_FILE = "config.json";
     private static final Object FILE_LOCK = new Object();
-    private static Path configDir;
+    private static volatile Path configDir;
     private static SyncConfig INSTANCE;
 
     // Configuration fields
@@ -51,15 +51,17 @@ public class SyncConfig {
      * @return The path to the config directory.
      */
     public static Path getConfigDir() {
-        if (configDir == null) {
-            configDir = Path.of("config", "simplesync");
+        Path dir = configDir;
+        if (dir == null) {
+            dir = Path.of("config", "simplesync");
+            configDir = dir;
         }
         try {
-            Files.createDirectories(configDir);
+            Files.createDirectories(dir);
         } catch (IOException e) {
             SimpleSync.LOGGER.error("[SimpleSync] Failed to create config directory", e);
         }
-        return configDir;
+        return dir;
     }
 
     /**
