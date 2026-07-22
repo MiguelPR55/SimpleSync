@@ -8,8 +8,10 @@ import dev.simplesync.util.RetryUtil.RunnableWithException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CloudSyncManager {
@@ -18,6 +20,7 @@ public class CloudSyncManager {
 
     private final ExecutorService executor;
     private final AtomicReference<StatusSnapshot> status;
+    private final List<Runnable> pendingAuthCallbacks = new CopyOnWriteArrayList<>();
     private volatile CloudProvider provider;
     private volatile Path savesDirectory;
     private volatile ConflictCallback conflictCallback;
@@ -72,10 +75,22 @@ public class CloudSyncManager {
     public boolean ensureAuthenticated(CloudProvider cloud, Runnable onAuthenticated) {
         if (cloud.isAuthenticated()) return true;
         setStatus(SyncStatus.AUTHENTICATING, "");
+        if (onAuthenticated != null) {
+            pendingAuthCallbacks.add(onAuthenticated);
+        }
         if (!cloud.isAuthenticating()) {
             runAsyncSafely("Auth failed", "Authentication failed", () -> {
-                cloud.authenticate();
-                if (onAuthenticated != null) onAuthenticated.run();
+                try {
+                    cloud.authenticate();
+                    List<Runnable> callbacks = new ArrayList<>(pendingAuthCallbacks);
+                    pendingAuthCallbacks.clear();
+                    for (Runnable cb : callbacks) {
+                        try { cb.run(); } catch (Exception e) { SimpleSync.LOGGER.error("[SimpleSync] Auth callback error", e); }
+                    }
+                } catch (Throwable t) {
+                    pendingAuthCallbacks.clear();
+                    throw t;
+                }
             });
         }
         return false;
@@ -365,11 +380,23 @@ public class CloudSyncManager {
     }
 
     public void syncSchematicsSync() throws IOException {
-        syncExtraAsync(ExtraSyncType.SCHEMATICS).join();
+        try {
+            syncExtraAsync(ExtraSyncType.SCHEMATICS).join();
+        } catch (CompletionException ce) {
+            if (ce.getCause() instanceof IOException ioe) throw ioe;
+            if (ce.getCause() instanceof RuntimeException re) throw re;
+            throw new IOException(ce.getCause() != null ? ce.getCause() : ce);
+        }
     }
 
     public void syncMasaConfigsSync() throws IOException {
-        syncExtraAsync(ExtraSyncType.MASA_CONFIGS).join();
+        try {
+            syncExtraAsync(ExtraSyncType.MASA_CONFIGS).join();
+        } catch (CompletionException ce) {
+            if (ce.getCause() instanceof IOException ioe) throw ioe;
+            if (ce.getCause() instanceof RuntimeException re) throw re;
+            throw new IOException(ce.getCause() != null ? ce.getCause() : ce);
+        }
     }
 
     // ─── Status ───────────────────────────────────────────────────────────
@@ -427,8 +454,18 @@ public class CloudSyncManager {
         return CompletableFuture.runAsync(() -> {
             try { task.run(); }
             catch (Throwable t) {
-                SimpleSync.LOGGER.error("[SimpleSync] {}", errorPrefix, t);
-                setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : defaultMsg);
+                Throwable cause = t;
+                while (cause.getCause() != null && cause != cause.getCause()) {
+                    if (cause instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) break;
+                    cause = cause.getCause();
+                }
+                if (cause instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) {
+                    SimpleSync.LOGGER.info("[SimpleSync] Authentication cancelled by user");
+                    clearStatus();
+                } else {
+                    SimpleSync.LOGGER.error("[SimpleSync] {}", errorPrefix, t);
+                    setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : defaultMsg);
+                }
             }
         }, executor);
     }

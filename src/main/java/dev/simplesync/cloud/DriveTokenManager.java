@@ -111,6 +111,10 @@ public class DriveTokenManager {
                     httpClient, "https://oauth2.googleapis.com/token", RetryUtil.formEncode(params));
 
             if (response.statusCode() != 200) {
+                if (response.statusCode() == 400 || (response.body() != null && response.body().contains("invalid_grant"))) {
+                    try { TokenStore.clear(); } catch (Exception ignored) {}
+                    SimpleSync.LOGGER.warn("[SimpleSync] Token permanently revoked or invalid_grant. Cleared TokenStore.");
+                }
                 throw new IOException("Token refresh returned HTTP " + response.statusCode() + ": " + response.body());
             }
 
