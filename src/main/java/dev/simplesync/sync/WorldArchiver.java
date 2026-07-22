@@ -182,8 +182,9 @@ public class WorldArchiver {
         Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 if (Files.isSymbolicLink(file)) return FileVisitResult.CONTINUE;
-                String name = file.getFileName().toString();
-                if (name.equals("session.lock") || name.equals("session.lock.backup")) return FileVisitResult.CONTINUE;
+                String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                if (name.equals("session.lock") || name.equals("session.lock.backup") || name.equals("level.dat_old") || name.equals("uid.dat")) return FileVisitResult.CONTINUE;
+                if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part")) return FileVisitResult.CONTINUE;
                 fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'));
                 return FileVisitResult.CONTINUE;
             }

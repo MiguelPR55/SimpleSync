@@ -100,7 +100,7 @@ public class DriveApiClient {
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     public static String escapeQueryString(String str) {
-        return str != null ? str.replace("\\", "").replace("\"", "").replace("'", "\\'") : "";
+        return str != null ? str.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"") : "";
     }
 
     public static String buildQuery(String format, String... args) {
