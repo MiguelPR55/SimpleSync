@@ -618,18 +618,26 @@ public class GoogleDriveProvider implements CloudProvider {
         String accessToken = ensureValidAccessToken();
         List<DriveItem> allRemoteItems = listAllDriveItemsUnder(accessToken, rootRemoteFolderId);
 
+        SyncConfig config = SyncConfig.load();
         List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
-        dev.simplesync.sync.FolderSyncTask.SyncPlan plan = dev.simplesync.sync.FolderSyncTask.createSyncPlan(localFiles, remoteFiles);
+        dev.simplesync.sync.FolderSyncTask.SyncPlan plan = dev.simplesync.sync.FolderSyncTask.createSyncPlan(localFiles, remoteFiles, config.fileTracking);
 
         Map<String, String> folderPathToIdMap = reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId);
         folderPathToIdMap.put("", rootRemoteFolderId);
 
         for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
             uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+            long now = System.currentTimeMillis();
+            config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
+            config.save();
         }
 
         for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
             downloadSingleFileIncremental(accessToken, localBaseDir, remote);
+            long now = System.currentTimeMillis();
+            long localMtime = remote.lastModified() > 0 ? remote.lastModified() : now;
+            config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
+            config.save();
         }
     }
 

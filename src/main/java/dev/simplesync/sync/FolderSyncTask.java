@@ -112,6 +112,15 @@ public class FolderSyncTask {
      * Uses upsert strategy (does not delete missing files on either side).
      */
     public static SyncPlan createSyncPlan(List<LocalFileInfo> localFiles, List<RemoteFileInfo> remoteFiles) {
+        return createSyncPlan(localFiles, remoteFiles, null);
+    }
+
+    /**
+     * Creates an incremental sync plan with file tracking information.
+     * If a local file exists but is untracked (never synced by this instance) and a remote file exists,
+     * the remote file is prioritized for download to protect cloud configurations from default overwrites.
+     */
+    public static SyncPlan createSyncPlan(List<LocalFileInfo> localFiles, List<RemoteFileInfo> remoteFiles, Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap) {
         List<LocalFileInfo> toUpload = new ArrayList<>();
         List<RemoteFileInfo> toDownload = new ArrayList<>();
 
@@ -127,9 +136,41 @@ public class FolderSyncTask {
             if (remote == null) {
                 // File does not exist remotely -> upload
                 toUpload.add(local);
-            } else if (local.lastModified() > remote.lastModified() + TIMESTAMP_TOLERANCE_MS) {
-                // Local file is newer -> upload
-                toUpload.add(local);
+            } else {
+                // File exists both locally and remotely
+                if (trackingMap != null) {
+                    dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingMap.get(local.relativePath());
+                    long lastSync = tracking != null ? tracking.lastSyncTimestamp() : 0L;
+
+                    if (lastSync == 0L) {
+                        // Untracked local file (e.g. freshly generated default config) vs existing cloud file.
+                        // Prioritize cloud version to protect remote user configs!
+                        toDownload.add(remote);
+                    } else {
+                        boolean localModifiedAfterSync = local.lastModified() > lastSync + TIMESTAMP_TOLERANCE_MS;
+                        boolean remoteModifiedAfterSync = remote.lastModified() > lastSync + TIMESTAMP_TOLERANCE_MS;
+
+                        if (localModifiedAfterSync && !remoteModifiedAfterSync) {
+                            toUpload.add(local);
+                        } else if (remoteModifiedAfterSync && !localModifiedAfterSync) {
+                            toDownload.add(remote);
+                        } else if (localModifiedAfterSync && remoteModifiedAfterSync) {
+                            // Both modified after sync -> pick newer
+                            if (local.lastModified() > remote.lastModified() + TIMESTAMP_TOLERANCE_MS) {
+                                toUpload.add(local);
+                            } else if (remote.lastModified() > local.lastModified() + TIMESTAMP_TOLERANCE_MS) {
+                                toDownload.add(remote);
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback when trackingMap is null (legacy behavior without tracking)
+                    if (local.lastModified() > remote.lastModified() + TIMESTAMP_TOLERANCE_MS) {
+                        toUpload.add(local);
+                    } else if (remote.lastModified() > local.lastModified() + TIMESTAMP_TOLERANCE_MS) {
+                        toDownload.add(remote);
+                    }
+                }
             }
         }
 
@@ -137,9 +178,6 @@ public class FolderSyncTask {
             LocalFileInfo local = localMap.get(remote.relativePath());
             if (local == null) {
                 // Remote file does not exist locally -> download
-                toDownload.add(remote);
-            } else if (remote.lastModified() > local.lastModified() + TIMESTAMP_TOLERANCE_MS) {
-                // Remote file is newer -> download
                 toDownload.add(remote);
             }
         }

@@ -72,4 +72,24 @@ public class FolderSyncTaskTest {
         assertTrue(plan.toDownload().contains(remoteOnly));
         assertTrue(plan.toDownload().contains(remoteNewer));
     }
+
+    @Test
+    public void testCreateSyncPlanPrioritizesCloudForUntrackedLocalFiles() {
+        // Simulates a fresh Minecraft instance: local default config has mtime NOW (10000), cloud config has mtime YESTERDAY (5000)
+        FolderSyncTask.LocalFileInfo localDefaultConfig = new FolderSyncTask.LocalFileInfo("config/litematica.json", tempDir.resolve("config/litematica.json"), 10000L, 100L);
+        FolderSyncTask.RemoteFileInfo remoteCloudConfig = new FolderSyncTask.RemoteFileInfo("config/litematica.json", "id_lite", 5000L, 200L);
+
+        List<FolderSyncTask.LocalFileInfo> locals = List.of(localDefaultConfig);
+        List<FolderSyncTask.RemoteFileInfo> remotes = List.of(remoteCloudConfig);
+
+        // Without tracking history (untracked), remote should be downloaded instead of being overwritten
+        dev.simplesync.config.SyncConfig.FileTrackingInfo untracked = new dev.simplesync.config.SyncConfig.FileTrackingInfo(0L, 0L, 0L);
+        java.util.Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap = java.util.Map.of("config/litematica.json", untracked);
+
+        FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(locals, remotes, trackingMap);
+
+        assertEquals(0, plan.toUpload().size());
+        assertEquals(1, plan.toDownload().size());
+        assertTrue(plan.toDownload().contains(remoteCloudConfig));
+    }
 }

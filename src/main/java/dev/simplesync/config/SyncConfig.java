@@ -30,6 +30,7 @@ public class SyncConfig {
     public boolean syncMasaConfigs = true;
     public String cloudProvider = "google_drive";
     public Map<String, WorldTrackingInfo> worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
+    public Map<String, FileTrackingInfo> fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
     public java.util.Set<String> ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     public String simpleSyncFolderId;
     public String worldsFolderId;
@@ -42,6 +43,7 @@ public class SyncConfig {
     private Map<String, Long> lastLocalMtimes;
 
     public record WorldTrackingInfo(long lastSyncTimestamp, long lastLocalSize, long lastLocalMtime) {}
+    public record FileTrackingInfo(long lastSyncTimestamp, long lastLocalSize, long lastLocalMtime) {}
 
     /**
      * Gets the config directory path, creating it if necessary.
@@ -134,6 +136,9 @@ public class SyncConfig {
                 if (config.worldTracking == null) {
                     config.worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
                 }
+                if (config.fileTracking == null) {
+                    config.fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+                }
                 if (config.lastSyncTimestamps != null || config.lastLocalSizes != null || config.lastLocalMtimes != null) {
                     java.util.Set<String> allWorlds = new java.util.HashSet<>();
                     if (config.lastSyncTimestamps != null) allWorlds.addAll(config.lastSyncTimestamps.keySet());
@@ -197,6 +202,26 @@ public class SyncConfig {
 
     public void removeTracking(String worldName) {
         worldTracking.remove(worldName);
+    }
+
+    public FileTrackingInfo getFileTracking(String relativePath) {
+        if (fileTracking == null) {
+            fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+        }
+        return fileTracking.getOrDefault(relativePath, new FileTrackingInfo(0L, 0L, 0L));
+    }
+
+    public void setFileTracking(String relativePath, FileTrackingInfo info) {
+        if (fileTracking == null) {
+            fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+        }
+        fileTracking.put(relativePath, info);
+    }
+
+    public void removeFileTracking(String relativePath) {
+        if (fileTracking != null) {
+            fileTracking.remove(relativePath);
+        }
     }
 
 }
