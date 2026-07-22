@@ -58,6 +58,11 @@ public class GoogleDriveProvider implements CloudProvider {
                 .version(HttpClient.Version.HTTP_2)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(15))
+                .executor(java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
+                    Thread t = new Thread(r, "SimpleSync-HTTP");
+                    t.setDaemon(true);
+                    return t;
+                }))
                 .build();
     }
 
