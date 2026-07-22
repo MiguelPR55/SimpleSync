@@ -32,6 +32,8 @@ public class TokenStore {
         return SyncConfig.getConfigDir().resolve("credentials");
     }
 
+    private static volatile TokenData cachedTokenData = null;
+
     public static void save(TokenData data) throws IOException {
         synchronized (FILE_LOCK) {
             Path credentialsDirectory = getCredentialsDir();
@@ -49,6 +51,7 @@ public class TokenStore {
                 Files.move(tempFile, tokensFile, StandardCopyOption.REPLACE_EXISTING);
             }
             trySetPermissions(tokensFile, "rw-------");
+            cachedTokenData = data;
         }
     }
 
@@ -59,14 +62,23 @@ public class TokenStore {
     }
 
     public static TokenData load() {
+        TokenData cached = cachedTokenData;
+        if (cached != null) {
+            return cached;
+        }
         synchronized (FILE_LOCK) {
+            if (cachedTokenData != null) {
+                return cachedTokenData;
+            }
             Path tokensFile = getCredentialsDir().resolve(TOKENS_FILE);
             if (!Files.exists(tokensFile) || !Files.isRegularFile(tokensFile)) {
                 return null;
             }
             try {
                 String json = Files.readString(tokensFile);
-                return GSON.fromJson(json, TokenData.class);
+                TokenData data = GSON.fromJson(json, TokenData.class);
+                cachedTokenData = data;
+                return data;
             } catch (Exception e) {
                 SimpleSync.LOGGER.error("[SimpleSync] Failed to load stored tokens", e);
                 return null;
@@ -76,6 +88,7 @@ public class TokenStore {
 
     public static void clear() throws IOException {
         synchronized (FILE_LOCK) {
+            cachedTokenData = null;
             Path tokensFile = getCredentialsDir().resolve(TOKENS_FILE);
             Files.deleteIfExists(tokensFile);
         }

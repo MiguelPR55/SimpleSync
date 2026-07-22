@@ -58,6 +58,11 @@ public class GoogleDriveProvider implements CloudProvider {
                 .version(HttpClient.Version.HTTP_2)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(15))
+                .executor(java.util.concurrent.Executors.newFixedThreadPool(8, r -> {
+                    Thread t = new Thread(r, "SimpleSync-HTTP-Worker");
+                    t.setDaemon(true);
+                    return t;
+                }))
                 .build();
     }
 
@@ -239,7 +244,7 @@ public class GoogleDriveProvider implements CloudProvider {
                     try {
                         InputStream fis = Files.newInputStream(file);
                         if (currentOffset > 0) {
-                            fis.skip(currentOffset);
+                            fis.skipNBytes(currentOffset);
                         }
                         return new ProgressInputStream(fis, fileSize, worldName, true, currentOffset);
                     } catch (IOException e) {
@@ -621,15 +626,57 @@ public class GoogleDriveProvider implements CloudProvider {
         List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
         dev.simplesync.sync.FolderSyncTask.SyncPlan plan = dev.simplesync.sync.FolderSyncTask.createSyncPlan(localFiles, remoteFiles);
 
-        Map<String, String> folderPathToIdMap = reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId);
+        Map<String, String> folderPathToIdMap = new ConcurrentHashMap<>(reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId));
         folderPathToIdMap.put("", rootRemoteFolderId);
 
-        for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
-            uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+        List<dev.simplesync.sync.FolderSyncTask.LocalFileInfo> toUpload = plan.toUpload();
+        List<dev.simplesync.sync.FolderSyncTask.RemoteFileInfo> toDownload = plan.toDownload();
+
+        if (toUpload.isEmpty() && toDownload.isEmpty()) {
+            return;
         }
 
-        for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
-            downloadSingleFileIncremental(accessToken, localBaseDir, remote);
+        int poolSize = Math.min(4, Math.max(1, toUpload.size() + toDownload.size()));
+        java.util.concurrent.ExecutorService threadPool = java.util.concurrent.Executors.newFixedThreadPool(poolSize, r -> {
+            Thread t = new Thread(r, "SimpleSync-DirectorySyncWorker");
+            t.setDaemon(true);
+            return t;
+        });
+
+        java.util.concurrent.atomic.AtomicReference<IOException> firstException = new java.util.concurrent.atomic.AtomicReference<>(null);
+
+        try {
+            List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
+
+            for (dev.simplesync.sync.FolderSyncTask.LocalFileInfo local : toUpload) {
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    if (firstException.get() != null) return;
+                    try {
+                        uploadSingleFileIncremental(accessToken, rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFiles);
+                    } catch (Throwable e) {
+                        firstException.compareAndSet(null, e instanceof IOException ioe ? ioe : new IOException(e));
+                    }
+                }, threadPool));
+            }
+
+            for (dev.simplesync.sync.FolderSyncTask.RemoteFileInfo remote : toDownload) {
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    if (firstException.get() != null) return;
+                    try {
+                        downloadSingleFileIncremental(accessToken, localBaseDir, remote);
+                    } catch (Throwable e) {
+                        firstException.compareAndSet(null, e instanceof IOException ioe ? ioe : new IOException(e));
+                    }
+                }, threadPool));
+            }
+
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+
+            if (firstException.get() != null) {
+                throw firstException.get();
+            }
+        } finally {
+            threadPool.shutdown();
         }
     }
 
@@ -827,20 +874,26 @@ public class GoogleDriveProvider implements CloudProvider {
             return folderMap.get(relFolderPath);
         }
 
-        String[] parts = relFolderPath.split("/");
-        String currentRel = "";
-        String currentParentId = rootFolderId;
-
-        for (String part : parts) {
-            currentRel = currentRel.isEmpty() ? part : currentRel + "/" + part;
-            if (folderMap.containsKey(currentRel)) {
-                currentParentId = folderMap.get(currentRel);
-            } else {
-                currentParentId = getOrCreateSubfolder(currentParentId, part);
-                folderMap.put(currentRel, currentParentId);
+        synchronized (folderMap) {
+            if (folderMap.containsKey(relFolderPath)) {
+                return folderMap.get(relFolderPath);
             }
+
+            String[] parts = relFolderPath.split("/");
+            String currentRel = "";
+            String currentParentId = rootFolderId;
+
+            for (String part : parts) {
+                currentRel = currentRel.isEmpty() ? part : currentRel + "/" + part;
+                if (folderMap.containsKey(currentRel)) {
+                    currentParentId = folderMap.get(currentRel);
+                } else {
+                    currentParentId = getOrCreateSubfolder(currentParentId, part);
+                    folderMap.put(currentRel, currentParentId);
+                }
+            }
+            return currentParentId;
         }
-        return currentParentId;
     }
 
     private byte[] buildMultipartBody(String boundary, String jsonMeta, byte[] fileBytes) throws IOException {

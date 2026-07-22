@@ -129,7 +129,7 @@ public class CloudSyncManager {
             WorldSyncTask.cleanupOrphanedDirectories(savesDirectoryPath);
             SyncConfig config = SyncConfig.load();
             int downloadCount = 0;
-
+            boolean hasErrors = false;
             for (WorldMetadata cloudWorld : cloudWorlds) {
                 try {
                     boolean downloaded = processSingleCloudWorld(cloud, savesDirectoryPath, config, cloudWorld);
@@ -140,13 +140,15 @@ public class CloudSyncManager {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
+                    hasErrors = true;
                     SimpleSync.LOGGER.error("[SimpleSync] Failed to process world '{}', skipping to next world", cloudWorld.worldName(), e);
+                    setStatus(SyncStatus.ERROR, cloudWorld.worldName() + ": " + (e.getMessage() != null ? e.getMessage() : "Failed"));
                 }
             }
 
-            if (downloadCount > 0) {
+            if (downloadCount > 0 && !hasErrors) {
                 setStatus(SyncStatus.DONE, "");
-            } else {
+            } else if (!hasErrors) {
                 clearStatus();
             }
 
@@ -370,6 +372,7 @@ public class CloudSyncManager {
                     setStatus(SyncStatus.ERROR, "No autenticado en Google Drive para borrar mundo en la nube.");
                     return false;
                 }
+                setStatus(SyncStatus.CHECKING, worldName);
                 SimpleSync.LOGGER.info("[SimpleSync] Deleting world '{}' from cloud...", worldName);
                 cloud.delete(worldName);
 
@@ -379,6 +382,7 @@ public class CloudSyncManager {
                     config.ignoredCloudWorlds.remove(worldName);
                 }
                 config.save();
+                clearStatus();
                 SimpleSync.LOGGER.info("[SimpleSync] Successfully deleted remote world '{}'", worldName);
                 return true;
             } catch (Throwable t) {

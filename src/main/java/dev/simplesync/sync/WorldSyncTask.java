@@ -168,6 +168,8 @@ public class WorldSyncTask {
         try (OutputStream fileOutputStream = new BufferedOutputStream(Files.newOutputStream(outputZip, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), BUFFER_SIZE);
              ZipOutputStream zipOutputStream = new ZipOutputStream(fileOutputStream)) {
 
+            zipOutputStream.setLevel(java.util.zip.Deflater.BEST_SPEED);
+
             walkWorldForCompression(worldFolder, (filePath, entryName) -> {
                 zipOutputStream.putNextEntry(new ZipEntry(entryName));
                 try (InputStream fileInputStream = Files.newInputStream(filePath)) {
@@ -181,9 +183,18 @@ public class WorldSyncTask {
         }
     }
 
+    private static com.github.luben.zstd.ZstdOutputStream createZstdOutputStream(OutputStream out) throws IOException {
+        com.github.luben.zstd.ZstdOutputStream zstdOut = new com.github.luben.zstd.ZstdOutputStream(out, 3);
+        int workers = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
+        if (workers > 1) {
+            zstdOut.setWorkers(workers);
+        }
+        return zstdOut;
+    }
+
     private static void compressWorldTarZst(Path worldFolder, Path outputArchive) throws IOException {
         try (OutputStream fileOutputStream = new BufferedOutputStream(Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), BUFFER_SIZE);
-             ZstdCompressorOutputStream zstdOutputStream = new ZstdCompressorOutputStream(fileOutputStream);
+             com.github.luben.zstd.ZstdOutputStream zstdOutputStream = createZstdOutputStream(fileOutputStream);
              TarArchiveOutputStream tarOutputStream = new TarArchiveOutputStream(zstdOutputStream)) {
 
             tarOutputStream.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
