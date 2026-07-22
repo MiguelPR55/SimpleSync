@@ -34,11 +34,11 @@ public class TokenStore {
 
     public static void save(TokenData data) throws IOException {
         synchronized (FILE_LOCK) {
-            Path dir = getCredentialsDir();
-            Files.createDirectories(dir);
-            trySetPermissions(dir, "rwx------");
-            Path tokensFile = dir.resolve(TOKENS_FILE);
-            Path tempFile = dir.resolve(TOKENS_FILE + ".tmp");
+            Path credentialsDirectory = getCredentialsDir();
+            Files.createDirectories(credentialsDirectory);
+            trySetPermissions(credentialsDirectory, "rwx------");
+            Path tokensFile = credentialsDirectory.resolve(TOKENS_FILE);
+            Path tempFile = credentialsDirectory.resolve(TOKENS_FILE + ".tmp");
 
             String json = GSON.toJson(data);
             Files.writeString(tempFile, json);
@@ -52,9 +52,9 @@ public class TokenStore {
         }
     }
 
-    private static void trySetPermissions(Path path, String perms) {
+    private static void trySetPermissions(Path path, String posixPermissions) {
         try {
-            Files.setPosixFilePermissions(path, java.nio.file.attribute.PosixFilePermissions.fromString(perms));
+            Files.setPosixFilePermissions(path, java.nio.file.attribute.PosixFilePermissions.fromString(posixPermissions));
         } catch (UnsupportedOperationException | IOException ignored) {}
     }
 

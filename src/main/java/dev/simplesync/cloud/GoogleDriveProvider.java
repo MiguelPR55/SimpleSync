@@ -35,6 +35,7 @@ import java.util.regex.Pattern;
  */
 public class GoogleDriveProvider implements CloudProvider {
 
+    private static final Gson GSON = new Gson();
     private static final String SIMPLESYNC_FOLDER_NAME = "SimpleSync";
     private static final String ZIP_MIME_TYPE = "application/zip";
     private static final String TAR_ZST_MIME_TYPE = "application/zstd";
@@ -45,6 +46,8 @@ public class GoogleDriveProvider implements CloudProvider {
     private final HttpClient httpClient;
     private volatile String simpleSyncFolderId;
     private final AtomicBoolean isAuthenticating = new AtomicBoolean(false);
+    private volatile ClientSecrets cachedSecrets;
+    private volatile long lastSecretsMtime = -1;
 
     private record ArchiveFileIds(String tarZstId, String zipId) {}
 
@@ -321,7 +324,7 @@ public class GoogleDriveProvider implements CloudProvider {
             }
             try (InputStream is = new ProgressInputStream(response.body(), fileSize, worldName, false);
                  OutputStream os = Files.newOutputStream(outputArchive, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-                byte[] buffer = new byte[8192];
+                byte[] buffer = new byte[65536];
                 int len;
                 while ((len = is.read(buffer)) > 0) {
                     os.write(buffer, 0, len);
@@ -426,8 +429,16 @@ public class GoogleDriveProvider implements CloudProvider {
         }
 
         if (ids.tarZstId() != null && ids.zipId() != null) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Inconsistent state: both .tar.zst and legacy .zip exist for world '{}' in cloud. Defaulting to .tar.zst.", worldName);
-            return getFileMetadataById(ids.tarZstId(), worldName);
+            WorldMetadata tarZstMetadata = getFileMetadataById(ids.tarZstId(), worldName);
+            WorldMetadata zipMetadata = getFileMetadataById(ids.zipId(), worldName);
+            if (tarZstMetadata != null && zipMetadata != null) {
+                if (zipMetadata.lastModified() > tarZstMetadata.lastModified()) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Both .tar.zst and legacy .zip exist for world '{}'. Selecting newer .zip archive.", worldName);
+                    return zipMetadata;
+                }
+            }
+            SimpleSync.LOGGER.warn("[SimpleSync] Both .tar.zst and legacy .zip exist for world '{}'. Defaulting to .tar.zst archive.", worldName);
+            return tarZstMetadata != null ? tarZstMetadata : zipMetadata;
         } else {
             String targetFileId = (ids.tarZstId() != null) ? ids.tarZstId() : ids.zipId();
             return getFileMetadataById(targetFileId, worldName);
@@ -436,10 +447,10 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private WorldMetadata getFileMetadataById(String fileId, String worldName) throws IOException {
         String accessToken = ensureValidAccessToken();
-        HttpRequest.Builder reqBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=id,name,modifiedTime,size", Duration.ofSeconds(30))
+        HttpRequest.Builder requestBuilder = authedRequest(accessToken, "https://www.googleapis.com/drive/v3/files/" + fileId + "?fields=id,name,modifiedTime,size", Duration.ofSeconds(30))
                 .GET();
         
-        HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
+        HttpResponse<String> response = sendWithRetry(requestBuilder, 3);
         if (response.statusCode() == 200) {
             JsonObject file = JsonParser.parseString(response.body()).getAsJsonObject();
             long modifiedTime = file.has("modifiedTime")
@@ -524,20 +535,28 @@ public class GoogleDriveProvider implements CloudProvider {
         }
     }
 
-    private ClientSecrets loadClientSecrets() throws IOException {
+    private synchronized ClientSecrets loadClientSecrets() throws IOException {
         Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
         if (!Files.exists(clientSecretFile)) {
             SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
             SimpleSync.LOGGER.warn("[SimpleSync] Please place your Google OAuth2 client_secret.json in the config/simplesync/ folder.");
             SimpleSync.LOGGER.warn("[SimpleSync] Instructions: https://console.cloud.google.com/apis/credentials");
+            cachedSecrets = null;
+            lastSecretsMtime = -1;
             return null;
         }
         try {
+            long currentMtime = Files.getLastModifiedTime(clientSecretFile).toMillis();
+            if (cachedSecrets != null && currentMtime == lastSecretsMtime) {
+                return cachedSecrets;
+            }
             String json = Files.readString(clientSecretFile);
-            ClientSecrets secrets = new Gson().fromJson(json, ClientSecrets.class);
+            ClientSecrets secrets = GSON.fromJson(json, ClientSecrets.class);
             if (secrets == null || secrets.getDetails() == null) {
                 throw new IOException("Invalid Google OAuth client secrets file: missing installed/web section");
             }
+            cachedSecrets = secrets;
+            lastSecretsMtime = currentMtime;
             return secrets;
         } catch (Exception e) {
             throw new IOException("Failed to load client_secret.json: " + e.getMessage(), e);
@@ -617,16 +636,25 @@ public class GoogleDriveProvider implements CloudProvider {
                             return;
                         }
                     } else if (checkResp.statusCode() == 404) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was not found (404).", savedFolderId);
+                        SimpleSync.LOGGER.warn("[SimpleSync] Saved SimpleSync folder ID {} was not found (404). Will recreate...", savedFolderId);
+                        config.simpleSyncFolderId = null;
+                        config.save();
+                    } else {
+                        throw new IOException("Failed to verify saved folder ID: HTTP " + checkResp.statusCode());
                     }
-                } catch (Exception e) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] Failed to verify saved SimpleSync folder ID {} ({}). Will search or recreate...", savedFolderId, e.getMessage());
+                } catch (IOException e) {
+                    if (e.getMessage() != null && e.getMessage().contains("404")) {
+                        config.simpleSyncFolderId = null;
+                        config.save();
+                    } else {
+                        throw e;
+                    }
                 }
             } else {
                 SimpleSync.LOGGER.warn("[SimpleSync] Ignoring unsafe saved Google Drive folder id");
+                config.simpleSyncFolderId = null;
+                config.save();
             }
-            config.simpleSyncFolderId = null;
-            config.save();
         }
 
         String query = buildQuery("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", SIMPLESYNC_FOLDER_NAME);
@@ -687,25 +715,24 @@ public class GoogleDriveProvider implements CloudProvider {
         String query = buildQuery("name='%s' and '%s' in parents and trashed=false", fileName, simpleSyncFolderId);
         String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query) + "&fields=files(id)&orderBy=modifiedTime%20desc";
 
-        HttpRequest.Builder reqBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30))
+        HttpRequest.Builder requestBuilder = authedRequest(accessToken, url, Duration.ofSeconds(30))
                 .GET();
 
-        try {
-            HttpResponse<String> response = sendWithRetry(reqBuilder, 3);
-            if (response.statusCode() == 200) {
-                JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
-                JsonArray files = body.getAsJsonArray("files");
-                if (files != null && files.size() > 0) {
-                    String id = files.get(0).getAsJsonObject().get("id").getAsString();
-                    fileIdCache.put(fileName, java.util.Optional.of(id));
-                    return id;
-                }
+        HttpResponse<String> response = sendWithRetry(requestBuilder, 3);
+        if (response.statusCode() == 200) {
+            JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+            JsonArray files = body.getAsJsonArray("files");
+            if (files != null && files.size() > 0) {
+                String id = files.get(0).getAsJsonObject().get("id").getAsString();
+                fileIdCache.put(fileName, java.util.Optional.of(id));
+                return id;
+            } else {
+                fileIdCache.put(fileName, java.util.Optional.empty());
+                return null;
             }
-        } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Failed to find file ID for {}: {}", fileName, e.getMessage());
+        } else {
+            throw new IOException("Failed to search Google Drive for file '" + fileName + "': HTTP " + response.statusCode() + " - " + response.body());
         }
-        fileIdCache.put(fileName, java.util.Optional.empty());
-        return null;
     }
 
     private void validateWorldName(String worldName) throws IOException {
@@ -730,28 +757,35 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private <T> HttpResponse<T> sendWithRetry(HttpRequest.Builder requestBuilder, HttpResponse.BodyHandler<T> responseBodyHandler, int maxAttempts) throws IOException {
         return RetryUtil.retry(maxAttempts, "HTTP Request", () -> {
-            HttpRequest request = requestBuilder.build();
-            HttpResponse<T> response = httpClient.send(request, responseBodyHandler);
-            int statusCode = response.statusCode();
-            if (statusCode == 401) {
-                String newAccessToken = ensureValidAccessToken();
-                requestBuilder.setHeader("Authorization", "Bearer " + newAccessToken);
-                throw new IOException("HTTP 401 Unauthorized (refreshed access token, retrying...)");
-            } else if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429 && statusCode != 404) {
-                if (response.body() instanceof String strBody) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, strBody);
-                } else {
-                    SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({})", statusCode);
+            boolean refreshedToken = false;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                HttpRequest request = requestBuilder.build();
+                HttpResponse<T> response = httpClient.send(request, responseBodyHandler);
+                int statusCode = response.statusCode();
+                if (statusCode == 401 && !refreshedToken) {
+                    refreshedToken = true;
+                    SimpleSync.LOGGER.info("[SimpleSync] HTTP 401 Unauthorized received. Refreshing access token and retrying request...");
+                    String newAccessToken = ensureValidAccessToken();
+                    requestBuilder.setHeader("Authorization", "Bearer " + newAccessToken);
+                    continue;
                 }
-                return response;
-            } else if ((statusCode >= 200 && statusCode < 300) || statusCode == 404) {
-                return response;
+                if (statusCode >= 400 && statusCode < 500 && statusCode != 408 && statusCode != 429 && statusCode != 404) {
+                    if (response.body() instanceof String strBody) {
+                        SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", statusCode, strBody);
+                    } else {
+                        SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({})", statusCode);
+                    }
+                    return response;
+                } else if ((statusCode >= 200 && statusCode < 300) || statusCode == 404) {
+                    return response;
+                }
+                if (response.body() instanceof String strBody) {
+                    throw new IOException("Server returned status " + statusCode + ": " + strBody);
+                } else {
+                    throw new IOException("Server returned status " + statusCode);
+                }
             }
-            if (response.body() instanceof String strBody) {
-                throw new IOException("Server returned status " + statusCode + ": " + strBody);
-            } else {
-                throw new IOException("Server returned status " + statusCode);
-            }
+            throw new IOException("HTTP 401 Unauthorized after token refresh");
         });
     }
 

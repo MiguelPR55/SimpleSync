@@ -187,7 +187,7 @@ public class CloudWorldsScreen extends Screen {
         }
 
         if (this.errorMessage != null) {
-            extractor.centeredText(this.font, Component.literal("Error: " + this.errorMessage), this.width / 2, this.height / 2 - 10, 0xFFFF5555);
+            extractor.centeredText(this.font, Component.translatable("simplesync.cloud_worlds.error", this.errorMessage), this.width / 2, this.height / 2 - 10, 0xFFFF5555);
             return;
         }
 

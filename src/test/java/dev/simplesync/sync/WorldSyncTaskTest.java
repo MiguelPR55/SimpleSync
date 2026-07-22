@@ -221,4 +221,60 @@ public class WorldSyncTaskTest {
         assertFalse(Files.exists(leftoverBackup),
                 "Leftover backup should be deleted when original world already exists");
     }
+
+    @Test
+    void testIsWorldNameSafe_Validation() {
+        // Valid world names
+        assertTrue(WorldSyncTask.isWorldNameSafe("MyWorld"));
+        assertTrue(WorldSyncTask.isWorldNameSafe("World-1.20_v2"));
+        assertTrue(WorldSyncTask.isWorldNameSafe("123_456"));
+        assertTrue(WorldSyncTask.isWorldNameSafe("Mundo de Minecraft"));
+
+        // Invalid / unsafe world names
+        assertFalse(WorldSyncTask.isWorldNameSafe(null));
+        assertFalse(WorldSyncTask.isWorldNameSafe(""));
+        assertFalse(WorldSyncTask.isWorldNameSafe("   "));
+        assertFalse(WorldSyncTask.isWorldNameSafe("../World"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World/Sub"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World\\Sub"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("CON"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("PRN.txt"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("AUX"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("NUL"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("COM1"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("LPT9"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World?"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World*"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World<"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World>"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World:"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World|"));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World."));
+        assertFalse(WorldSyncTask.isWorldNameSafe("World "));
+        assertFalse(WorldSyncTask.isWorldNameSafe("A".repeat(65)));
+    }
+
+    @Test
+    void testCompressAndExtractWorld_LargePayload64KbBuffer() throws IOException {
+        Path largeWorldDir = tempDir.resolve("LargeWorld");
+        Files.createDirectories(largeWorldDir);
+        
+        // Generate a 1 MB payload file
+        byte[] payload = new byte[1024 * 1024];
+        for (int i = 0; i < payload.length; i++) {
+            payload[i] = (byte) (i % 256);
+        }
+        Files.write(largeWorldDir.resolve("region_chunk.mca"), payload);
+
+        Path archive = tempDir.resolve("largeworld.tar.zst");
+        WorldSyncTask.compressWorld(largeWorldDir, archive);
+        assertTrue(Files.exists(archive));
+
+        Path extractedDir = tempDir.resolve("ExtractedLargeWorld");
+        WorldSyncTask.extractWorld(archive, extractedDir);
+
+        Path extractedFile = extractedDir.resolve("region_chunk.mca");
+        assertTrue(Files.exists(extractedFile));
+        assertArrayEquals(payload, Files.readAllBytes(extractedFile));
+    }
 }

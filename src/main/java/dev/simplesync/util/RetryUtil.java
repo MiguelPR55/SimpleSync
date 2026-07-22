@@ -48,10 +48,24 @@ public class RetryUtil {
                     }
                 }
             } catch (Exception e) {
-                if (e instanceof RuntimeException re) {
+                if (e instanceof java.io.UncheckedIOException uioe) {
+                    lastError = uioe.getCause();
+                    SimpleSync.LOGGER.warn("[SimpleSync] {} attempt {}/{} failed (UncheckedIOException): {}", operationName, attempt, maxAttempts, lastError.getMessage());
+                    if (attempt < maxAttempts) {
+                        try {
+                            long baseDelay = 1000L * (1L << (attempt - 1));
+                            long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+                            Thread.sleep(Math.max(100L, baseDelay + jitter));
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException(operationName + " interrupted during retry delay", ie);
+                        }
+                    }
+                } else if (e instanceof RuntimeException re) {
                     throw re;
+                } else {
+                    throw new IOException(e);
                 }
-                throw new IOException(e);
             }
         }
         throw lastError != null ? lastError : new IOException(operationName + " failed after retries");

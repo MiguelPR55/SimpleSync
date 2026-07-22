@@ -60,5 +60,6 @@
   "simplesync.cloud_worlds.delete": "Borrar",
   "simplesync.cloud_worlds.status.installed": "[Instalado]",
   "simplesync.cloud_worlds.status.archived": "[Archivado / Desinstalado]",
-  "simplesync.cloud_worlds.status.cloud_only": "[Solo en Nube]"
+  "simplesync.cloud_worlds.status.cloud_only": "[Solo en Nube]",
+  "simplesync.cloud_worlds.error": "Error: %s"
 }

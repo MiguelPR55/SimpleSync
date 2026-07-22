@@ -178,12 +178,12 @@ public class SyncConfigScreen extends Screen {
     }
 
     private Component getAutoStartText() {
-        String state = config.autoSyncOnStart ? "ON" : "OFF";
+        Component state = Component.translatable(config.autoSyncOnStart ? "options.on" : "options.off");
         return Component.translatable("simplesync.config.auto_start", state);
     }
 
     private Component getAutoExitText() {
-        String state = config.autoSyncOnExit ? "ON" : "OFF";
+        Component state = Component.translatable(config.autoSyncOnExit ? "options.on" : "options.off");
         return Component.translatable("simplesync.config.auto_exit", state);
     }
 

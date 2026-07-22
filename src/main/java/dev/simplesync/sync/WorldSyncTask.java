@@ -21,7 +21,7 @@ import org.apache.commons.compress.compressors.zstandard.ZstdCompressorOutputStr
 
 public class WorldSyncTask {
 
-    private static final int BUFFER_SIZE = 8192;
+    private static final int BUFFER_SIZE = 65536;
     private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB — large modded worlds can be very big
 
     private static final String SUFFIX_STAGING = "_staging";
@@ -69,7 +69,7 @@ public class WorldSyncTask {
             return false;
         }
         for (String part : normalized.split("/")) {
-            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..") || part.endsWith(".") || part.endsWith(" ")) {
                 return false;
             }
             if (WINDOWS_RESERVED_NAMES.matcher(part).matches()) {
@@ -165,58 +165,58 @@ public class WorldSyncTask {
     }
 
     private static void compressWorldZip(Path worldFolder, Path outputZip) throws IOException {
-        try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(outputZip, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 65536);
-             ZipOutputStream zos = new ZipOutputStream(fos)) {
+        try (OutputStream fileOutputStream = new BufferedOutputStream(Files.newOutputStream(outputZip, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), BUFFER_SIZE);
+             ZipOutputStream zipOutputStream = new ZipOutputStream(fileOutputStream)) {
 
-            walkWorldForCompression(worldFolder, (file, entryName) -> {
-                zos.putNextEntry(new ZipEntry(entryName));
-                try (InputStream fis = Files.newInputStream(file)) {
-                    byte[] buffer = new byte[BUFFER_SIZE];
-                    int len;
-                    while ((len = fis.read(buffer)) > 0) {
-                        zos.write(buffer, 0, len);
-                    }
+            walkWorldForCompression(worldFolder, (filePath, entryName) -> {
+                zipOutputStream.putNextEntry(new ZipEntry(entryName));
+                try (InputStream fileInputStream = Files.newInputStream(filePath)) {
+                    transferData(fileInputStream, zipOutputStream);
                 }
-                zos.closeEntry();
-            }, (dir, entryName) -> {
-                zos.putNextEntry(new ZipEntry(entryName + "/"));
-                zos.closeEntry();
+                zipOutputStream.closeEntry();
+            }, (dirPath, entryName) -> {
+                zipOutputStream.putNextEntry(new ZipEntry(entryName + "/"));
+                zipOutputStream.closeEntry();
             });
         }
     }
 
     private static void compressWorldTarZst(Path worldFolder, Path outputArchive) throws IOException {
-        try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 65536);
-             ZstdCompressorOutputStream zos = new ZstdCompressorOutputStream(fos);
-             TarArchiveOutputStream tos = new TarArchiveOutputStream(zos)) {
+        try (OutputStream fileOutputStream = new BufferedOutputStream(Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), BUFFER_SIZE);
+             ZstdCompressorOutputStream zstdOutputStream = new ZstdCompressorOutputStream(fileOutputStream);
+             TarArchiveOutputStream tarOutputStream = new TarArchiveOutputStream(zstdOutputStream)) {
 
-            tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
-            tos.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
+            tarOutputStream.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+            tarOutputStream.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
 
-            walkWorldForCompression(worldFolder, (file, entryName) -> {
+            walkWorldForCompression(worldFolder, (filePath, entryName) -> {
                 TarArchiveEntry entry = new TarArchiveEntry(entryName);
-                entry.setSize(Files.size(file));
+                entry.setSize(Files.size(filePath));
                 try {
-                    entry.setModTime(Files.getLastModifiedTime(file).toMillis());
+                    entry.setModTime(Files.getLastModifiedTime(filePath));
                 } catch (Exception ignored) {}
-                tos.putArchiveEntry(entry);
-                try (InputStream fis = Files.newInputStream(file)) {
-                    byte[] buffer = new byte[BUFFER_SIZE];
-                    int len;
-                    while ((len = fis.read(buffer)) > 0) {
-                        tos.write(buffer, 0, len);
-                    }
+                tarOutputStream.putArchiveEntry(entry);
+                try (InputStream fileInputStream = Files.newInputStream(filePath)) {
+                    transferData(fileInputStream, tarOutputStream);
                 }
-                tos.closeArchiveEntry();
-            }, (dir, entryName) -> {
+                tarOutputStream.closeArchiveEntry();
+            }, (dirPath, entryName) -> {
                 String dirEntryName = entryName.endsWith("/") ? entryName : entryName + "/";
                 TarArchiveEntry entry = new TarArchiveEntry(dirEntryName);
                 try {
-                    entry.setModTime(Files.getLastModifiedTime(dir).toMillis());
+                    entry.setModTime(Files.getLastModifiedTime(dirPath));
                 } catch (Exception ignored) {}
-                tos.putArchiveEntry(entry);
-                tos.closeArchiveEntry();
+                tarOutputStream.putArchiveEntry(entry);
+                tarOutputStream.closeArchiveEntry();
             });
+        }
+    }
+
+    private static void transferData(InputStream inputSource, OutputStream outputDestination) throws IOException {
+        byte[] buffer = new byte[BUFFER_SIZE];
+        int bytesRead;
+        while ((bytesRead = inputSource.read(buffer)) > 0) {
+            outputDestination.write(buffer, 0, bytesRead);
         }
     }
 
@@ -239,7 +239,6 @@ public class WorldSyncTask {
 
         SimpleSync.LOGGER.info("[SimpleSync] Extracting world: {} -> {} (via staging)", archiveFile, normalizedTarget);
 
-        // Create syncing marker to protect against abrupt JVM crash/kill
         Files.writeString(syncingMarker, "syncing");
 
         if (Files.isDirectory(stagingDir)) {
@@ -279,7 +278,6 @@ public class WorldSyncTask {
                 throw e;
             }
 
-            // Delete syncing marker immediately after successful move to eliminate recovery rollback window
             try {
                 Files.deleteIfExists(syncingMarker);
             } catch (IOException e) {
@@ -303,20 +301,20 @@ public class WorldSyncTask {
     }
 
     private static void extractZipEntries(Path zipFile, Path stagingDir) throws IOException {
-        try (InputStream fis = new BufferedInputStream(Files.newInputStream(zipFile), 65536);
-             ZipInputStream zis = new ZipInputStream(fis)) {
+        try (InputStream fileInputStream = new BufferedInputStream(Files.newInputStream(zipFile), BUFFER_SIZE);
+             ZipInputStream zipInputStream = new ZipInputStream(fileInputStream)) {
 
             boolean hasEntries = false;
-            long totalExtracted = 0;
+            long totalExtractedBytes = 0;
             ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
+            while ((entry = zipInputStream.getNextEntry()) != null) {
                 hasEntries = true;
                 if (!isArchiveEntryNameSafe(entry.getName())) {
                     throw new IOException("Unsafe ZIP entry name: " + entry.getName());
                 }
                 Path entryPath = stagingDir.resolve(entry.getName()).normalize();
 
-                // Security check: prevent zip slip attack
+                // Zip slip protection
                 if (!entryPath.startsWith(stagingDir)) {
                     throw new IOException("ZIP entry is outside of target directory: " + entry.getName());
                 }
@@ -324,13 +322,18 @@ public class WorldSyncTask {
                 if (entry.isDirectory()) {
                     Files.createDirectories(entryPath);
                 } else {
-                    Files.createDirectories(entryPath.getParent());
-                    try (OutputStream fos = Files.newOutputStream(entryPath)) {
-                        totalExtracted = copyWithLimit(zis, fos, totalExtracted, MAX_EXTRACT_SIZE, "zip");
+                    if (entryPath.getParent() != null) {
+                        Files.createDirectories(entryPath.getParent());
+                    }
+                    if (Files.isSymbolicLink(entryPath)) {
+                        Files.delete(entryPath);
+                    }
+                    try (OutputStream outputStream = Files.newOutputStream(entryPath)) {
+                        totalExtractedBytes = copyWithLimit(zipInputStream, outputStream, totalExtractedBytes, MAX_EXTRACT_SIZE, "zip");
                     }
                 }
 
-                zis.closeEntry();
+                zipInputStream.closeEntry();
             }
             if (!hasEntries) {
                 throw new IOException("ZIP archive is empty or invalid: " + zipFile);
@@ -339,21 +342,21 @@ public class WorldSyncTask {
     }
 
     private static void extractTarZstEntries(Path archiveFile, Path stagingDir) throws IOException {
-        try (InputStream fis = new BufferedInputStream(Files.newInputStream(archiveFile), 65536);
-             ZstdCompressorInputStream zis = new ZstdCompressorInputStream(fis);
-             TarArchiveInputStream tis = new TarArchiveInputStream(zis)) {
+        try (InputStream fileInputStream = new BufferedInputStream(Files.newInputStream(archiveFile), BUFFER_SIZE);
+             ZstdCompressorInputStream zstdInputStream = new ZstdCompressorInputStream(fileInputStream);
+             TarArchiveInputStream tarInputStream = new TarArchiveInputStream(zstdInputStream)) {
 
             boolean hasEntries = false;
-            long totalExtracted = 0;
+            long totalExtractedBytes = 0;
             TarArchiveEntry entry;
-            while ((entry = tis.getNextTarEntry()) != null) {
+            while ((entry = tarInputStream.getNextTarEntry()) != null) {
                 hasEntries = true;
                 if (!isArchiveEntryNameSafe(entry.getName())) {
                     throw new IOException("Unsafe archive entry name: " + entry.getName());
                 }
                 Path entryPath = stagingDir.resolve(entry.getName()).normalize();
 
-                // Security check: prevent tar slip attack
+                // Tar slip protection
                 if (!entryPath.startsWith(stagingDir)) {
                     throw new IOException("Archive entry is outside of target directory: " + entry.getName());
                 }
@@ -367,8 +370,8 @@ public class WorldSyncTask {
                     if (Files.isSymbolicLink(entryPath)) {
                         Files.delete(entryPath);
                     }
-                    try (OutputStream fos = Files.newOutputStream(entryPath)) {
-                        totalExtracted = copyWithLimit(tis, fos, totalExtracted, MAX_EXTRACT_SIZE, "archive");
+                    try (OutputStream outputStream = Files.newOutputStream(entryPath)) {
+                        totalExtractedBytes = copyWithLimit(tarInputStream, outputStream, totalExtractedBytes, MAX_EXTRACT_SIZE, "archive");
                     }
                 }
             }
@@ -378,19 +381,19 @@ public class WorldSyncTask {
         }
     }
 
-    private static long copyWithLimit(InputStream in, OutputStream out, long alreadyExtracted, long maxTotal, String archiveType) throws IOException {
+    private static long copyWithLimit(InputStream inputSource, OutputStream outputDestination, long alreadyExtractedBytes, long maxTotalBytes, String archiveType) throws IOException {
         byte[] buffer = new byte[BUFFER_SIZE];
-        int len;
-        long totalExtracted = alreadyExtracted;
-        while ((len = in.read(buffer)) > 0) {
-            totalExtracted += len;
-            if (totalExtracted > maxTotal) {
+        int bytesRead;
+        long totalExtractedBytes = alreadyExtractedBytes;
+        while ((bytesRead = inputSource.read(buffer)) > 0) {
+            totalExtractedBytes += bytesRead;
+            if (totalExtractedBytes > maxTotalBytes) {
                 throw new IOException("Extraction aborted: uncompressed data exceeds maximum allowed size ("
-                        + (maxTotal / (1024 * 1024 * 1024)) + " GB). Possible " + archiveType + " bomb.");
+                        + (maxTotalBytes / (1024 * 1024 * 1024)) + " GB). Possible " + archiveType + " bomb.");
             }
-            out.write(buffer, 0, len);
+            outputDestination.write(buffer, 0, bytesRead);
         }
-        return totalExtracted;
+        return totalExtractedBytes;
     }
 
     /**
@@ -409,6 +412,11 @@ public class WorldSyncTask {
                     String name = entry.getFileName().toString();
                     if (name.endsWith(SUFFIX_SYNCING)) {
                         String worldName = name.substring(0, name.length() - SUFFIX_SYNCING.length());
+                        if (!isWorldNameSafe(worldName)) {
+                            SimpleSync.LOGGER.warn("[SimpleSync] Skipping interrupted sync cleanup for unsafe world name '{}'", worldName);
+                            try { Files.deleteIfExists(entry); } catch (IOException ignored) {}
+                            continue;
+                        }
                         Path originalWorld = savesDir.resolve(worldName);
                         Path backupDir = savesDir.resolve(worldName + SUFFIX_BACKUP);
                         Path stagingDir = savesDir.resolve(worldName + SUFFIX_STAGING);

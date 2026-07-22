@@ -47,19 +47,19 @@ public class DeviceCodeAuthenticator {
                 "client_id", clientId,
                 "scope", scope
         ));
-        JsonObject deviceResp = post(DEVICE_CODE_URL, deviceCodeBody);
+        JsonObject deviceResponse = post(DEVICE_CODE_URL, deviceCodeBody);
         
-        if (deviceResp == null || !deviceResp.has("device_code") || !deviceResp.has("user_code") || !deviceResp.has("expires_in")) {
-            throw new IOException("Malformed Google OAuth Device Authorization response: " + (deviceResp != null ? deviceResp.toString() : "null"));
+        if (deviceResponse == null || !deviceResponse.has("device_code") || !deviceResponse.has("user_code") || !deviceResponse.has("expires_in")) {
+            throw new IOException("Malformed Google OAuth Device Authorization response: " + (deviceResponse != null ? deviceResponse.toString() : "null"));
         }
 
-        String deviceCode = deviceResp.get("device_code").getAsString();
-        String userCode = deviceResp.get("user_code").getAsString();
-        String verificationUrl = deviceResp.has("verification_url")
-                ? deviceResp.get("verification_url").getAsString()
-                : (deviceResp.has("verification_uri") ? deviceResp.get("verification_uri").getAsString() : "https://www.google.com/device");
-        long expiresIn = deviceResp.get("expires_in").getAsLong();
-        long intervalSeconds = deviceResp.has("interval") ? deviceResp.get("interval").getAsLong() : 5;
+        String deviceCode = deviceResponse.get("device_code").getAsString();
+        String userCode = deviceResponse.get("user_code").getAsString();
+        String verificationUrl = deviceResponse.has("verification_url")
+                ? deviceResponse.get("verification_url").getAsString()
+                : (deviceResponse.has("verification_uri") ? deviceResponse.get("verification_uri").getAsString() : "https://www.google.com/device");
+        long expiresIn = deviceResponse.get("expires_in").getAsLong();
+        long intervalSeconds = deviceResponse.has("interval") ? deviceResponse.get("interval").getAsLong() : 5;
 
         SimpleSync.LOGGER.info("[SimpleSync] Device Auth prompt -> URL: {}, Code: {} (Expires in {}s)", verificationUrl, userCode, expiresIn);
 
@@ -101,27 +101,27 @@ public class DeviceCodeAuthenticator {
             params.put("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
             String tokenBody = dev.simplesync.util.RetryUtil.formEncode(params);
 
-            HttpResponse<String> raw;
+            HttpResponse<String> tokenResponse;
             try {
-                raw = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, TOKEN_URL, tokenBody);
+                tokenResponse = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, TOKEN_URL, tokenBody);
             } catch (IOException e) {
                 SimpleSync.LOGGER.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
                 continue;
             }
-            JsonObject body = JsonParser.parseString(raw.body()).getAsJsonObject();
+            JsonObject responseBody = JsonParser.parseString(tokenResponse.body()).getAsJsonObject();
 
-            if (raw.statusCode() == 200 && body.has("access_token")) {
+            if (tokenResponse.statusCode() == 200 && responseBody.has("access_token")) {
                 SimpleSync.LOGGER.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
-                String accessToken = body.get("access_token").getAsString();
-                String refreshToken = body.has("refresh_token") ? body.get("refresh_token").getAsString() : null;
-                long expiresInSeconds = body.has("expires_in") ? body.get("expires_in").getAsLong() : 3600L;
+                String accessToken = responseBody.get("access_token").getAsString();
+                String refreshToken = responseBody.has("refresh_token") ? responseBody.get("refresh_token").getAsString() : null;
+                long expiresInSeconds = responseBody.has("expires_in") ? responseBody.get("expires_in").getAsLong() : 3600L;
                 long expiresAtMs = System.currentTimeMillis() + (expiresInSeconds * 1000L);
                 
                 TokenStore.save(new TokenStore.TokenData(accessToken, refreshToken, expiresAtMs));
                 return;
             }
 
-            String error = body.has("error") ? body.get("error").getAsString() : "unknown_error";
+            String error = responseBody.has("error") ? responseBody.get("error").getAsString() : "unknown_error";
             switch (error) {
                 case "authorization_pending" -> {
                     // Waiting for user to complete authorization in browser
@@ -131,7 +131,7 @@ public class DeviceCodeAuthenticator {
                 }
                 case "expired_token" -> throw new IOException("Authorization code has expired. Please try again.");
                 case "access_denied" -> throw new IOException("Authentication denied by user.");
-                default -> throw new IOException("Authentication failed: " + error + (body.has("error_description") ? " - " + body.get("error_description").getAsString() : ""));
+                default -> throw new IOException("Authentication failed: " + error + (responseBody.has("error_description") ? " - " + responseBody.get("error_description").getAsString() : ""));
             }
         }
 

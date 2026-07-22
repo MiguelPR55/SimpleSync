@@ -32,10 +32,10 @@ public class CloudSyncManager {
     private final ExecutorService executor;
     private final AtomicReference<StatusSnapshot> status;
     private volatile CloudProvider provider;
-    private Path savesDirectory;
-    private ConflictCallback conflictCallback;
-    private Runnable conflictCancelCallback;
-    private AuthPromptCallback authPromptCallback;
+    private volatile Path savesDirectory;
+    private volatile ConflictCallback conflictCallback;
+    private volatile Runnable conflictCancelCallback;
+    private volatile AuthPromptCallback authPromptCallback;
 
     public void setConflictCallback(ConflictCallback callback) {
         this.conflictCallback = callback;
@@ -120,136 +120,154 @@ public class CloudSyncManager {
     public CompletableFuture<Void> syncAllWorldsFromCloud() {
         return runAsyncSafely("Sync from cloud failed", "Unknown error", () -> {
             CloudProvider cloud = getProvider();
-                ensureAuthenticatedOrThrow(cloud, this::syncAllWorldsFromCloud);
+            ensureAuthenticatedOrThrow(cloud, this::syncAllWorldsFromCloud);
 
-                setStatus(SyncStatus.CHECKING, "");
+            setStatus(SyncStatus.CHECKING, "");
 
-                List<WorldMetadata> cloudWorlds = cloud.listWorlds();
-                Path savesDir = getSavesDirectory();
-                WorldSyncTask.cleanupOrphanedDirectories(savesDir);
-                SyncConfig config = SyncConfig.load();
-                int downloadCount = 0;
+            List<WorldMetadata> cloudWorlds = cloud.listWorlds();
+            Path savesDirectoryPath = getSavesDirectory();
+            WorldSyncTask.cleanupOrphanedDirectories(savesDirectoryPath);
+            SyncConfig config = SyncConfig.load();
+            int downloadCount = 0;
 
-                for (WorldMetadata cloudWorld : cloudWorlds) {
-                    try {
-                        String worldName = cloudWorld.worldName();
-                        if (!WorldSyncTask.isWorldNameSafe(worldName)) {
-                            SimpleSync.LOGGER.warn("[SimpleSync] Security violation: ignoring cloud world with unsafe name '{}'", worldName);
-                            continue;
-                        }
-                        Path worldFolder = savesDir.resolve(worldName).normalize();
-                        if (!worldFolder.startsWith(savesDir.normalize())) {
-                            SimpleSync.LOGGER.warn("[SimpleSync] Security violation: path traversal detected for world '{}'", worldName);
-                            continue;
-                        }
-                        if (config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(worldName)) {
-                            SimpleSync.LOGGER.info("[SimpleSync] Skipping cloud world '{}' because it is marked as ignored/archived locally.", worldName);
-                            continue;
-                        }
-
-                        long localTimestamp = config.getTracking(worldName).lastSyncTimestamp();
-                        long tolerance = localTimestamp > 0 ? 5000L : 0L;
-
-                        if (cloudWorld.lastModified() > (localTimestamp + tolerance) || !java.nio.file.Files.isDirectory(worldFolder)) {
-                            if (!java.nio.file.Files.isDirectory(worldFolder)) {
-                                if (localTimestamp > 0) {
-                                    SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted outside Minecraft (previous sync timestamp found). Adding to ignored/archived list to protect cloud backup...", worldName);
-                                    config.removeTracking(worldName);
-                                    if (config.ignoredCloudWorlds != null) {
-                                        config.ignoredCloudWorlds.add(worldName);
-                                    }
-                                    config.save();
-                                    continue;
-                                }
-                            }
-
-                            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
-                            boolean localModified = WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats);
-                            if (localModified) {
-                                if (conflictCallback != null) {
-                                    SimpleSync.LOGGER.info("[SimpleSync] Conflict detected for world '{}'", worldName);
-                                    setStatus(SyncStatus.CONFLICT, worldName);
-
-                                    CompletableFuture<Boolean> conflictResolution = new CompletableFuture<>();
-                                    long localMtime = stats.latestModifiedTime();
-                                    conflictCallback.onConflict(
-                                            worldName,
-                                            localMtime > 0 ? localMtime : System.currentTimeMillis(),
-                                            cloudWorld.lastModified(),
-                                            () -> conflictResolution.complete(true),
-                                            () -> conflictResolution.complete(false)
-                                    );
-
-                                    boolean useCloud;
-                                    try {
-                                        useCloud = conflictResolution.get(120, TimeUnit.SECONDS);
-                                    } catch (java.util.concurrent.TimeoutException te) {
-                                        SimpleSync.LOGGER.warn("[SimpleSync] Conflict screen timed out (120s) for world '{}'. Defaulting to keep local.", worldName);
-                                        if (conflictCancelCallback != null) {
-                                            conflictCancelCallback.run();
-                                        }
-                                        conflictResolution.complete(false);
-                                        useCloud = false;
-                                    } catch (ExecutionException ee) {
-                                        SimpleSync.LOGGER.error("[SimpleSync] Error during conflict resolution for world '{}'", worldName, ee.getCause());
-                                        conflictResolution.complete(false);
-                                        useCloud = false;
-                                    } catch (InterruptedException ie) {
-                                        SimpleSync.LOGGER.warn("[SimpleSync] Sync interrupted during conflict resolution for world '{}'", worldName);
-                                        conflictResolution.complete(false);
-                                        Thread.currentThread().interrupt();
-                                        break;
-                                    }
-
-                                    if (!useCloud) {
-                                        SimpleSync.LOGGER.info("[SimpleSync] User chose to keep local version of '{}', triggering upload to cloud...", worldName);
-                                        uploadWorldSync(worldName);
-                                        continue;
-                                    }
-                                } else {
-                                    SimpleSync.LOGGER.warn("[SimpleSync] Conflict detected for world '{}', but no conflict callback is registered! Defaulting to keep local version and uploading to cloud.", worldName);
-                                    uploadWorldSync(worldName);
-                                    continue;
-                                }
-                            }
-
-                            setStatus(SyncStatus.DOWNLOADING, worldName);
-
-                            Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
-                            try {
-                                cloud.download(worldName, tempArchive);
-
-                                setStatus(SyncStatus.EXTRACTING, worldName);
-                                WorldSyncTask.extractWorld(tempArchive, worldFolder);
-
-                                updateWorldTracking(config, worldName, worldFolder, cloudWorld.lastModified());
-                                config.save();
-
-                                downloadCount++;
-                                SimpleSync.LOGGER.info("[SimpleSync] Downloaded world: {}", worldName);
-                            } finally {
-                                deleteQuietly(tempArchive);
-                            }
-                        } else {
-                            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
-                            if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
-                                SimpleSync.LOGGER.info("[SimpleSync] Local world '{}' has modifications not present in cloud. Triggering upload...", worldName);
-                                uploadWorldSync(worldName);
-                            } else {
-                                SimpleSync.LOGGER.info("[SimpleSync] World '{}' is up to date", worldName);
-                            }
-                        }
-                    } catch (Exception e) {
-                        SimpleSync.LOGGER.error("[SimpleSync] Failed to process world '{}', skipping to next world", cloudWorld.worldName(), e);
+            for (WorldMetadata cloudWorld : cloudWorlds) {
+                try {
+                    boolean downloaded = processSingleCloudWorld(cloud, savesDirectoryPath, config, cloudWorld);
+                    if (downloaded) {
+                        downloadCount++;
                     }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Failed to process world '{}', skipping to next world", cloudWorld.worldName(), e);
                 }
+            }
 
-                if (downloadCount > 0) {
-                    setStatus(SyncStatus.DONE, "");
-                } else {
-                    clearStatus();
-                }
+            if (downloadCount > 0) {
+                setStatus(SyncStatus.DONE, "");
+            } else {
+                clearStatus();
+            }
         });
+    }
+
+    private boolean processSingleCloudWorld(CloudProvider cloudProvider, Path savesDir, SyncConfig config, WorldMetadata cloudWorld) throws Exception {
+        String worldName = cloudWorld.worldName();
+        if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Security violation: ignoring cloud world with unsafe name '{}'", worldName);
+            return false;
+        }
+        Path worldFolder = savesDir.resolve(worldName).normalize();
+        if (!worldFolder.startsWith(savesDir.normalize())) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Security violation: path traversal detected for world '{}'", worldName);
+            return false;
+        }
+        if (config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(worldName)) {
+            SimpleSync.LOGGER.info("[SimpleSync] Skipping cloud world '{}' because it is marked as ignored/archived locally.", worldName);
+            return false;
+        }
+
+        long localTimestamp = config.getTracking(worldName).lastSyncTimestamp();
+        long tolerance = localTimestamp > 0 ? 5000L : 0L;
+
+        if (cloudWorld.lastModified() > (localTimestamp + tolerance) || !Files.isDirectory(worldFolder)) {
+            if (!Files.isDirectory(worldFolder) && localTimestamp > 0) {
+                SimpleSync.LOGGER.info("[SimpleSync] World '{}' was deleted outside Minecraft. Adding to ignored/archived list to protect cloud backup...", worldName);
+                config.removeTracking(worldName);
+                if (config.ignoredCloudWorlds != null) {
+                    config.ignoredCloudWorlds.add(worldName);
+                }
+                config.save();
+                return false;
+            }
+
+            WorldSyncTask.WorldStats worldStats = WorldSyncTask.getWorldStats(worldFolder);
+            boolean isLocalModified = WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, worldStats);
+            if (isLocalModified) {
+                boolean shouldUseCloud = resolveWorldConflict(worldName, worldStats, cloudWorld.lastModified());
+                if (!shouldUseCloud) {
+                    SimpleSync.LOGGER.info("[SimpleSync] User chose local version of '{}', triggering upload to cloud...", worldName);
+                    uploadWorldSync(worldName);
+                    return false;
+                }
+            }
+
+            downloadAndExtractCloudWorld(cloudProvider, worldName, worldFolder, config, cloudWorld.lastModified());
+            return true;
+        } else {
+            WorldSyncTask.WorldStats worldStats = WorldSyncTask.getWorldStats(worldFolder);
+            if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, worldStats)) {
+                SimpleSync.LOGGER.info("[SimpleSync] Local world '{}' has modifications not present in cloud. Triggering upload...", worldName);
+                uploadWorldSync(worldName);
+            } else {
+                SimpleSync.LOGGER.info("[SimpleSync] World '{}' is up to date", worldName);
+            }
+            return false;
+        }
+    }
+
+    private boolean resolveWorldConflict(String worldName, WorldSyncTask.WorldStats worldStats, long cloudModifiedTime) throws InterruptedException {
+        if (conflictCallback == null) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Conflict detected for world '{}', but no conflict callback is registered! Skipping sync for safety.", worldName);
+            clearStatus();
+            return false;
+        }
+
+        SimpleSync.LOGGER.info("[SimpleSync] Conflict detected for world '{}'", worldName);
+        setStatus(SyncStatus.CONFLICT, worldName);
+
+        CompletableFuture<Boolean> conflictResolution = new CompletableFuture<>();
+        long localModifiedTime = worldStats.latestModifiedTime();
+        conflictCallback.onConflict(
+                worldName,
+                localModifiedTime > 0 ? localModifiedTime : System.currentTimeMillis(),
+                cloudModifiedTime,
+                () -> conflictResolution.complete(true),
+                () -> conflictResolution.complete(false)
+        );
+
+        try {
+            return conflictResolution.get(120, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException timeoutException) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Conflict screen timed out (120s) for world '{}'. Cancelling sync.", worldName);
+            triggerConflictCancel();
+            return false;
+        } catch (ExecutionException executionException) {
+            SimpleSync.LOGGER.error("[SimpleSync] Error during conflict resolution for world '{}'. Skipping sync.", worldName, executionException.getCause());
+            triggerConflictCancel();
+            return false;
+        } catch (InterruptedException interruptedException) {
+            SimpleSync.LOGGER.warn("[SimpleSync] Sync interrupted during conflict resolution for world '{}'", worldName);
+            triggerConflictCancel();
+            throw interruptedException;
+        }
+    }
+
+    private void triggerConflictCancel() {
+        if (conflictCancelCallback != null) {
+            conflictCancelCallback.run();
+        }
+        clearStatus();
+    }
+
+    private void downloadAndExtractCloudWorld(CloudProvider cloudProvider, String worldName, Path worldFolder, SyncConfig config, long cloudModifiedTime) throws IOException {
+        setStatus(SyncStatus.DOWNLOADING, worldName);
+
+        Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
+        try {
+            cloudProvider.download(worldName, tempArchive);
+
+            setStatus(SyncStatus.EXTRACTING, worldName);
+            WorldSyncTask.extractWorld(tempArchive, worldFolder);
+
+            updateWorldTracking(config, worldName, worldFolder, cloudModifiedTime);
+            config.save();
+
+            SimpleSync.LOGGER.info("[SimpleSync] Successfully downloaded world: {}", worldName);
+        } finally {
+            deleteQuietly(tempArchive);
+        }
     }
 
     /**
@@ -337,6 +355,11 @@ public class CloudSyncManager {
     public CompletableFuture<Boolean> deleteWorldFromCloudAsync(String worldName) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                if (!WorldSyncTask.isWorldNameSafe(worldName)) {
+                    SimpleSync.LOGGER.warn("[SimpleSync] Security violation: cannot delete world with unsafe name '{}'", worldName);
+                    setStatus(SyncStatus.ERROR, "Nombre de mundo no válido");
+                    return false;
+                }
                 CloudProvider cloud = getProvider();
                 if (cloud == null || !cloud.isAuthenticated()) {
                     SimpleSync.LOGGER.warn("[SimpleSync] Cannot delete remote world '{}': Not authenticated", worldName);
