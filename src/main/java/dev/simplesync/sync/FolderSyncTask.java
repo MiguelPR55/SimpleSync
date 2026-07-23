@@ -18,7 +18,7 @@ public class FolderSyncTask {
 
     public record LocalFileInfo(String relativePath, Path fullPath, long lastModified, long size) {}
     public record RemoteFileInfo(String relativePath, String fileId, long lastModified, long size) {}
-    public record SyncPlan(List<LocalFileInfo> toUpload, List<RemoteFileInfo> toDownload) {}
+    public record SyncPlan(List<LocalFileInfo> toUpload, List<RemoteFileInfo> toDownload, List<LocalFileInfo> toDeleteLocally) {}
 
     private static final Set<String> IGNORED_EXTENSIONS = Set.of(".tmp", ".bak", ".crdownload", ".download", ".staging", ".part", ".lock", ".DS_Store");
     private static final long TIMESTAMP_TOLERANCE_MS = 2000L;
@@ -123,6 +123,10 @@ public class FolderSyncTask {
     public static SyncPlan createSyncPlan(List<LocalFileInfo> localFiles, List<RemoteFileInfo> remoteFiles, Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap) {
         List<LocalFileInfo> toUpload = new ArrayList<>();
         List<RemoteFileInfo> toDownload = new ArrayList<>();
+        List<LocalFileInfo> toDeleteLocally = new ArrayList<>();
+
+        Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingSnapshot =
+                trackingMap != null ? Map.copyOf(trackingMap) : Map.of();
 
         Map<String, RemoteFileInfo> remoteMap = new HashMap<>();
         for (RemoteFileInfo remote : remoteFiles) {
@@ -134,12 +138,19 @@ public class FolderSyncTask {
             localMap.put(local.relativePath(), local);
             RemoteFileInfo remote = remoteMap.get(local.relativePath());
             if (remote == null) {
-                // File does not exist remotely -> upload
-                toUpload.add(local);
+                // File does not exist remotely
+                dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
+                long lastSync = tracking != null ? tracking.lastSyncTimestamp() : 0L;
+                if (lastSync > 0L) {
+                    // Previously synced to cloud, but now deleted from cloud -> delete locally
+                    toDeleteLocally.add(local);
+                } else {
+                    toUpload.add(local);
+                }
             } else {
                 // File exists both locally and remotely
                 if (trackingMap != null) {
-                    dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingMap.get(local.relativePath());
+                    dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
                     long lastSync = tracking != null ? tracking.lastSyncTimestamp() : 0L;
 
                     if (lastSync == 0L) {
@@ -182,6 +193,6 @@ public class FolderSyncTask {
             }
         }
 
-        return new SyncPlan(toUpload, toDownload);
+        return new SyncPlan(toUpload, toDownload, toDeleteLocally);
     }
 }

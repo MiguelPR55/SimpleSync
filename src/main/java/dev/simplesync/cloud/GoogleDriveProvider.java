@@ -451,10 +451,20 @@ public class GoogleDriveProvider implements CloudProvider {
                 throw new IOException("Download failed: HTTP " + resp.statusCode());
             }
 
+            long expectedSize = resp.headers().firstValueAsLong("Content-Length").orElse(meta.sizeBytes());
+
             try (InputStream is = new ProgressInputStream(resp.body(), meta.sizeBytes(), worldName, false);
                  OutputStream os = new BufferedOutputStream(
                          Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 262144)) {
                 is.transferTo(os);
+            }
+
+            if (expectedSize > 0) {
+                long actualSize = Files.size(outputArchive);
+                if (actualSize != expectedSize) {
+                    Files.deleteIfExists(outputArchive);
+                    throw new IOException("Download size mismatch for world '" + worldName + "': expected " + expectedSize + " bytes, got " + actualSize + " bytes");
+                }
             }
         } catch (Exception e) {
             try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}

@@ -55,12 +55,12 @@ public abstract class WorldListEntryMixin {
                         this.doDeleteWorld();
 
                         if (deleteFromDrive) {
-                            CloudSyncManager.getInstance().deleteWorldFromCloudAsync(worldId);
+                            CloudSyncManager.getInstance().deleteWorldFromCloudAsync(worldName);
                         } else {
                             SyncConfig config = SyncConfig.load();
-                            config.removeTracking(worldId);
+                            config.removeTracking(worldName);
                             if (config.ignoredCloudWorlds != null) {
-                                config.ignoredCloudWorlds.add(worldId);
+                                config.ignoredCloudWorlds.add(worldName);
                             }
                             config.save();
                         }

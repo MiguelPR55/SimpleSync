@@ -104,6 +104,21 @@ public class DriveSyncEngine {
                 }, filePool));
             }
 
+            for (FolderSyncTask.LocalFileInfo local : plan.toDeleteLocally()) {
+                try {
+                    Path target = localBaseDir.resolve(local.relativePath()).normalize();
+                    if (target.startsWith(localBaseDir.normalize())) {
+                        Files.deleteIfExists(target);
+                        SimpleSync.LOGGER.info("[SimpleSync] Deleted local file '{}' (removed from cloud)", local.relativePath());
+                    }
+                    synchronized (config) {
+                        config.removeFileTracking(local.relativePath());
+                    }
+                } catch (IOException e) {
+                    SimpleSync.LOGGER.error("[SimpleSync] Failed to delete local file '{}'", local.relativePath(), e);
+                }
+            }
+
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             config.save();
         } catch (CompletionException ce) {
@@ -212,12 +227,22 @@ public class DriveSyncEngine {
             throw new IOException("Failed to download " + remote.relativePath() + ": HTTP " + resp.statusCode());
         }
 
+        long expectedSize = resp.headers().firstValueAsLong("Content-Length").orElse(remote.size());
+
         try (InputStream is = resp.body();
              OutputStream os = Files.newOutputStream(targetFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
             is.transferTo(os);
         } catch (IOException e) {
             try { Files.deleteIfExists(targetFile); } catch (IOException ignored) {}
             throw e;
+        }
+
+        if (expectedSize > 0) {
+            long actualSize = Files.size(targetFile);
+            if (actualSize != expectedSize) {
+                Files.deleteIfExists(targetFile);
+                throw new IOException("Download size mismatch for " + remote.relativePath() + ": expected " + expectedSize + " bytes, got " + actualSize + " bytes");
+            }
         }
 
         if (remote.lastModified() > 0) {
