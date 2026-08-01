@@ -7,7 +7,8 @@
     "TitleScreenMixin",
     "ScreenMixin",
     "WorldListEntryMixin",
-    "SelectWorldScreenMixin"
+    "SelectWorldScreenMixin",
+    "CameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1
