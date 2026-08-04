@@ -6,7 +6,7 @@
 
 ## Features
 
-- **Automatic World Sync**: Seamlessly backs up and syncs your single-player worlds to Google Drive in the background when entering or leaving worlds.
+- **Automatic World Sync**: Uploads your world to Google Drive as soon as you save and exit, and downloads/syncs updates whenever you launch the game or return to the main menu.
 - **Cross-Device Progress**: Play seamlessly on different computers while keeping your latest world progress up to date.
 - **Conflict Detection**: Warns you if a world was modified on another device and lets you choose which version to keep.
 - **Cloud World Manager**: View, download, restore, or delete your cloud saves right from an in-game menu.
