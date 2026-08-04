@@ -31,3 +31,6 @@ client_secret.json
 /credentials/
 *.secret
 /temp/
+*.zip
+rendering_src/
+src_unzipped/

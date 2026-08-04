@@ -16,7 +16,8 @@ public class ScreenMixin {
 
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onExtractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        if (net.minecraft.client.Minecraft.getInstance().level != null) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        if (client == null || client.level != null) {
             return;
         }
         SyncStatusOverlay.getInstance().renderOverlay(extractor);

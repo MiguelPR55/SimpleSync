@@ -23,7 +23,8 @@ public abstract class CameraMixin {
     @Inject(method = "getCameraEntityPartialTicks", at = @At("HEAD"), cancellable = true)
     private void onGetCameraEntityPartialTicks(DeltaTracker deltaTracker, CallbackInfoReturnable<Float> cir) {
         if (this.level == null || this.entity == null) {
-            cir.setReturnValue(deltaTracker.getGameTimeDeltaPartialTick(true));
+            float partialTick = (deltaTracker != null) ? deltaTracker.getGameTimeDeltaPartialTick(true) : 1.0f;
+            cir.setReturnValue(partialTick);
         }
     }
 }
