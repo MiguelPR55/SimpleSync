@@ -10,8 +10,7 @@
     "SelectWorldScreenMixin",
     "CameraMixin",
     "MultiPlayerGameModeMixin",
-    "ClientShutdownWatchdogMixin",
-    "MinecraftMixin"
+    "ClientShutdownWatchdogMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -474,36 +474,63 @@ public class CloudSyncManager {
         }, executor);
     }
 
-    public void shutdownAndAwaitTermination() {
-        SimpleSync.LOGGER.info("[SimpleSync] Game shutdown detected. Waiting for pending world sync operations to complete...");
-        executor.shutdown();
+    public boolean spawnStandaloneUploader(String worldName, Path worldFolder, Path archivePath) {
         try {
-            if (!executor.awaitTermination(120, TimeUnit.SECONDS)) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Shutdown timeout reached (120s). Forcing executor shutdown.");
-                executor.shutdownNow();
+            String javaBin = ProcessHandle.current().info().command().orElse("java");
+            Path configDir = SyncConfig.getConfigDir();
+
+            var modContainer = net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("simplesync");
+            if (modContainer.isEmpty()) return false;
+            Path jarPath = modContainer.get().getOrigin().getPaths().get(0);
+
+            List<String> command = new ArrayList<>();
+            command.add(javaBin);
+            command.add("-cp");
+            command.add(jarPath.toAbsolutePath().toString());
+            command.add("dev.simplesync.cloud.StandaloneUploader");
+            command.add("--world");
+            command.add(worldName);
+            if (worldFolder != null && Files.isDirectory(worldFolder)) {
+                command.add("--worldDir");
+                command.add(worldFolder.toAbsolutePath().toString());
             }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        } finally {
-            if (provider != null) {
-                try {
-                    provider.shutdown();
-                } catch (Exception ignored) {}
+            if (archivePath != null) {
+                command.add("--archive");
+                command.add(archivePath.toAbsolutePath().toString());
             }
-            try {
-                Path tempDir = SyncConfig.getConfigDir().resolve("temp");
-                if (Files.isDirectory(tempDir)) {
-                    try (var stream = Files.newDirectoryStream(tempDir)) {
-                        for (Path entry : stream) deleteQuietly(entry);
-                    }
-                }
-            } catch (Exception ignored) {}
+            command.add("--config");
+            command.add(configDir.toAbsolutePath().toString());
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            Path logFile = configDir.resolve("uploader.log");
+            pb.redirectOutput(ProcessBuilder.Redirect.to(logFile.toFile()));
+            pb.redirectError(ProcessBuilder.Redirect.to(logFile.toFile()));
+            pb.start();
+            SimpleSync.LOGGER.info("[SimpleSync] Spawned detached background uploader process for: {}", worldName);
+            return true;
+        } catch (Exception e) {
+            SimpleSync.LOGGER.error("[SimpleSync] Failed to spawn standalone background uploader", e);
+            return false;
         }
     }
 
-    public void cancelCurrentSync() {
-        SimpleSync.LOGGER.info("[SimpleSync] Cancelling current sync task...");
+    public void shutdownAndAwaitTermination() {
+        StatusSnapshot snapshot = getStatusSnapshot();
+        SyncStatus status = snapshot.status();
+
+        if (status == SyncStatus.UPLOADING || status == SyncStatus.COMPRESSING || status == SyncStatus.CHECKING) {
+            String worldName = snapshot.detail();
+            if (worldName != null && !worldName.isEmpty()) {
+                Path savesDir = getSavesDirectory();
+                Path worldFolder = savesDir != null ? savesDir.resolve(worldName) : null;
+                Path tempArchive = SyncConfig.getConfigDir().resolve("temp").resolve(worldName + ".tar.zst");
+                spawnStandaloneUploader(worldName, worldFolder, tempArchive);
+            }
+        }
+
+        if (executor != null) {
+            executor.shutdownNow();
+        }
         if (provider != null) {
             try { provider.shutdown(); } catch (Exception ignored) {}
         }

@@ -75,6 +75,10 @@ public class SyncConfig {
         return dir;
     }
 
+    public static void setConfigDir(Path dir) {
+        configDir = dir;
+    }
+
     /**
      * Loads the configuration from disk, or creates a new default config.
      *
