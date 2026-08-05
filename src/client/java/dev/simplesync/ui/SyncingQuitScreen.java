@@ -7,16 +7,17 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 
 /**
  * Screen displayed when the user attempts to quit Minecraft while a world sync/upload is active.
- * Displays live progress and allows waiting or canceling the sync to exit immediately.
+ * Displays live progress and allows waiting for auto-close or canceling the sync to exit immediately.
  */
 public class SyncingQuitScreen extends Screen {
 
+    private Button waitButton;
     private Button cancelQuitButton;
+    private boolean isWaitingMode = true;
 
     public SyncingQuitScreen() {
         super(Component.literal("SimpleSync - Uploading World"));
@@ -25,11 +26,25 @@ public class SyncingQuitScreen extends Screen {
     @Override
     protected void init() {
         super.init();
-        int buttonWidth = 200;
+        int centerX = this.width / 2;
+        int buttonWidth = 240;
         int buttonHeight = 20;
-        int x = (this.width - buttonWidth) / 2;
-        int y = this.height / 2 + 30;
+        int startY = this.height / 2 + 20;
 
+        // Button 1: Wait & Close Automatically
+        this.waitButton = Button.builder(
+                Component.literal("Wait for Sync & Close Automatically"),
+                button -> {
+                    this.isWaitingMode = true;
+                    button.active = false;
+                    button.setMessage(Component.literal("Waiting for sync to complete..."));
+                }
+        ).bounds(centerX - buttonWidth / 2, startY, buttonWidth, buttonHeight).build();
+        // By default we are waiting automatically
+        this.waitButton.active = false;
+        this.waitButton.setMessage(Component.literal("Waiting for sync to complete..."));
+
+        // Button 2: Cancel & Quit Immediately
         this.cancelQuitButton = Button.builder(
                 Component.literal("Cancel Sync & Quit Immediately"),
                 button -> {
@@ -39,19 +54,22 @@ public class SyncingQuitScreen extends Screen {
                         client.stop();
                     }
                 }
-        ).bounds(x, y, buttonWidth, buttonHeight).build();
+        ).bounds(centerX - buttonWidth / 2, startY + 26, buttonWidth, buttonHeight).build();
 
+        this.addRenderableWidget(this.waitButton);
         this.addRenderableWidget(this.cancelQuitButton);
     }
 
     @Override
     public void tick() {
         super.tick();
-        SyncStatus status = CloudSyncManager.getInstance().getStatus();
-        if (!status.isBusy()) {
-            Minecraft client = Minecraft.getInstance();
-            if (client != null) {
-                client.stop();
+        if (isWaitingMode) {
+            SyncStatus status = CloudSyncManager.getInstance().getStatus();
+            if (!status.isBusy()) {
+                Minecraft client = Minecraft.getInstance();
+                if (client != null) {
+                    client.stop();
+                }
             }
         }
     }
@@ -70,14 +88,12 @@ public class SyncingQuitScreen extends Screen {
             statusText += " (" + detail + ")";
         }
 
-        int titleX = (this.width - this.font.width(titleText)) / 2;
-        int statusX = (this.width - this.font.width(statusText)) / 2;
-        String closeMsg = "Closing Minecraft automatically once complete...";
-        int closeX = (this.width - this.font.width(closeMsg)) / 2;
+        int centerX = this.width / 2;
+        int centerY = this.height / 2;
 
-        extractor.text(this.font, titleText, titleX, this.height / 2 - 40, 0xFFFFFF, true);
-        extractor.text(this.font, statusText, statusX, this.height / 2 - 15, 0x4FC3F7, true);
-        extractor.text(this.font, closeMsg, closeX, this.height / 2 + 5, 0xAAAAAA, true);
+        extractor.centeredText(this.font, Component.literal(titleText), centerX, centerY - 55, 0xFFFFFFFF);
+        extractor.centeredText(this.font, Component.literal(statusText), centerX, centerY - 30, 0xFF4FC3F7);
+        extractor.centeredText(this.font, Component.literal("Minecraft will close automatically once the sync reaches 100%."), centerX, centerY - 5, 0xFFAAAAAA);
     }
 
     @Override
