@@ -475,20 +475,22 @@ public class CloudSyncManager {
     }
 
     public void shutdownAndAwaitTermination() {
-        if (provider != null) {
-            try {
-                provider.shutdown();
-            } catch (Exception ignored) {}
-        }
+        SimpleSync.LOGGER.info("[SimpleSync] Game shutdown detected. Waiting for pending world sync operations to complete...");
         executor.shutdown();
         try {
-            if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
+            if (!executor.awaitTermination(120, TimeUnit.SECONDS)) {
+                SimpleSync.LOGGER.warn("[SimpleSync] Shutdown timeout reached (120s). Forcing executor shutdown.");
                 executor.shutdownNow();
             }
         } catch (InterruptedException e) {
             executor.shutdownNow();
             Thread.currentThread().interrupt();
         } finally {
+            if (provider != null) {
+                try {
+                    provider.shutdown();
+                } catch (Exception ignored) {}
+            }
             try {
                 Path tempDir = SyncConfig.getConfigDir().resolve("temp");
                 if (Files.isDirectory(tempDir)) {

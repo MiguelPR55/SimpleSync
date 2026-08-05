@@ -9,7 +9,8 @@
     "WorldListEntryMixin",
     "SelectWorldScreenMixin",
     "CameraMixin",
-    "MultiPlayerGameModeMixin"
+    "MultiPlayerGameModeMixin",
+    "ClientShutdownWatchdogMixin"
   ],
   "injectors": {
     "defaultRequire": 1
