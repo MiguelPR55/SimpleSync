@@ -544,4 +544,13 @@ public class GoogleDriveProvider implements CloudProvider {
             try { is.close(); } catch (Exception ignored) {}
         }
     }
+
+    @Override
+    public void shutdown() {
+        try {
+            if (syncEngine != null) {
+                syncEngine.shutdown();
+            }
+        } catch (Exception ignored) {}
+    }
 }

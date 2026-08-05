@@ -475,9 +475,14 @@ public class CloudSyncManager {
     }
 
     public void shutdownAndAwaitTermination() {
+        if (provider != null) {
+            try {
+                provider.shutdown();
+            } catch (Exception ignored) {}
+        }
         executor.shutdown();
         try {
-            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+            if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
                 executor.shutdownNow();
             }
         } catch (InterruptedException e) {

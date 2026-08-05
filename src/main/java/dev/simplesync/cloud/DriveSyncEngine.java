@@ -36,6 +36,12 @@ public class DriveSyncEngine {
         this.filePool = filePool;
     }
 
+    public void shutdown() {
+        if (filePool != null) {
+            filePool.shutdownNow();
+        }
+    }
+
     // ─── Public Entry Points ──────────────────────────────────────────────
 
     public void syncSchematics(Path gameRootDir) throws IOException {

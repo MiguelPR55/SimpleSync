@@ -91,4 +91,9 @@ public interface CloudProvider {
      * @throws IOException if sync fails
      */
     void syncMasaConfigs(Path gameRootDir) throws IOException;
+
+    /**
+     * Shuts down any background pools or resources associated with this provider.
+     */
+    default void shutdown() {}
 }
