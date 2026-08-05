@@ -1,16 +1,12 @@
 package dev.simplesync.cloud;
 
-import com.google.gson.Gson;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
 
-import java.io.IOException;
-import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Duration;
 
 /**
  * Standalone entry point for uploading worlds in a detached background process
@@ -62,19 +58,6 @@ public class StandaloneUploader {
                 return;
             }
 
-            HttpClient httpClient = HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_2)
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofSeconds(15))
-                    .build();
-
-            DriveTokenManager tokenManager = new DriveTokenManager(httpClient);
-            String accessToken = tokenManager.ensureValidAccessToken();
-
-            DriveApiClient api = new DriveApiClient(httpClient, tokenManager);
-            DriveFolderManager folders = new DriveFolderManager(api);
-            DriveSyncEngine syncEngine = new DriveSyncEngine(api, folders, java.util.concurrent.Executors.newFixedThreadPool(2));
-
             GoogleDriveProvider provider = new GoogleDriveProvider();
             System.out.println("[SimpleSync-Uploader] Uploading archive to Google Drive...");
             WorldMetadata uploaded = provider.upload(worldName, targetArchive);
@@ -86,6 +69,7 @@ public class StandaloneUploader {
                 config.save();
                 System.out.println("[SimpleSync-Uploader] Successfully uploaded '" + worldName + "' to Google Drive!");
             }
+            provider.shutdown();
         } catch (Exception e) {
             System.err.println("[SimpleSync-Uploader] Upload failed: " + e.getMessage());
             e.printStackTrace();
