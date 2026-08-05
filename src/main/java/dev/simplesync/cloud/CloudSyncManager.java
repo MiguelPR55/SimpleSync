@@ -501,4 +501,12 @@ public class CloudSyncManager {
             } catch (Exception ignored) {}
         }
     }
+
+    public void cancelCurrentSync() {
+        SimpleSync.LOGGER.info("[SimpleSync] Cancelling current sync task...");
+        if (provider != null) {
+            try { provider.shutdown(); } catch (Exception ignored) {}
+        }
+        clearStatus();
+    }
 }
