@@ -91,6 +91,7 @@ public class FolderSyncTask {
                 "config/tweakeroo",
                 "config/minihud",
                 "config/itemscroller",
+                "config/malilib",
                 "itemscroller"
         );
 

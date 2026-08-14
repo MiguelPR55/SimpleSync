@@ -6,6 +6,8 @@ import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.ui.DeleteWorldConfirmScreen;
 import dev.simplesync.util.SyncLogger;
 import net.minecraft.client.Minecraft;
+
+import java.nio.file.Path;
 import net.minecraft.client.gui.screens.ProgressScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldSelectionList;
 import net.minecraft.network.chat.CommonComponents;
@@ -48,6 +50,12 @@ public abstract class WorldListEntryMixin {
             dev.simplesync.ui.SyncToast.showWorldPendingToast(displayName);
             ci.cancel();
             return;
+        }
+
+        Path gameRoot = syncManager.getGameRootDir();
+        dev.simplesync.compat.litematica.LitematicaIntegration.prepareWorldPlacements(worldId, gameRoot);
+        if (worldName != null && !worldName.equals(worldId)) {
+            dev.simplesync.compat.litematica.LitematicaIntegration.prepareWorldPlacements(worldName, gameRoot);
         }
     }
 

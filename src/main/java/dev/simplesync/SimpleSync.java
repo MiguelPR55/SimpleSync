@@ -7,6 +7,8 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.world.level.storage.LevelResource;
 
+import java.nio.file.Path;
+
 public class SimpleSync implements ModInitializer {
 
     public static final String MOD_ID = "simplesync";
@@ -41,6 +43,9 @@ public class SimpleSync implements ModInitializer {
             String stoppedWorld = lastWorldName;
             CloudSyncManager.getInstance().markWorldUnsynchronized(stoppedWorld);
 
+            Path gameRoot = CloudSyncManager.getInstance().getGameRootDir();
+            dev.simplesync.compat.litematica.LitematicaIntegration.onWorldExit(stoppedWorld, gameRoot);
+
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnExit) {
                 SyncLogger.info("[SimpleSync] World stopped: {}. Uploading...", stoppedWorld);
@@ -61,6 +66,8 @@ public class SimpleSync implements ModInitializer {
             "dev.simplesync.cloud.DeviceCodeAuthenticator",
             "dev.simplesync.cloud.GoogleDriveProvider",
             "dev.simplesync.cloud.CloudSyncManager",
+            "dev.simplesync.compat.litematica.LitematicaPathNormalizer",
+            "dev.simplesync.compat.litematica.LitematicaIntegration",
             "dev.simplesync.util.RetryUtil",
             "dev.simplesync.util.SyncLogger",
             "dev.simplesync.sync.WorldSyncTask",

@@ -29,6 +29,7 @@ public class DriveFolderManager {
     private final DriveApiClient api;
     private volatile String simpleSyncFolderId;
     private final Map<String, Optional<String>> fileIdCache = new ConcurrentHashMap<>();
+    private final Map<String, String> validatedSubfolders = new ConcurrentHashMap<>();
 
     public DriveFolderManager(DriveApiClient api) {
         this.api = api;
@@ -156,13 +157,33 @@ public class DriveFolderManager {
     public String getSubfolderId(String folderName,
                                  Function<SyncConfig, String> getter,
                                  BiConsumer<SyncConfig, String> setter) throws IOException {
-        getSimpleSyncFolderId(); // ensure root exists
+        String rootId = getSimpleSyncFolderId(); // ensure root exists
+        String inMemory = validatedSubfolders.get(folderName);
+        if (inMemory != null) return inMemory;
+
         SyncConfig config = SyncConfig.load();
         String cached = getter.apply(config);
-        if (cached != null && isSafeDriveFileId(cached)) return cached;
-        String id = getOrCreateSubfolder(simpleSyncFolderId, folderName);
+        if (cached != null && isSafeDriveFileId(cached)) {
+            // Verify once per session that it still exists on Drive
+            try {
+                HttpRequest.Builder req = api.authedRequest(
+                        "https://www.googleapis.com/drive/v3/files/" + cached + "?fields=id,trashed",
+                        Duration.ofSeconds(15)).GET();
+                HttpResponse<String> resp = api.send(req, 2);
+                if (resp.statusCode() == 200) {
+                    JsonObject folder = JsonParser.parseString(resp.body()).getAsJsonObject();
+                    if (!folder.has("trashed") || !folder.get("trashed").getAsBoolean()) {
+                        validatedSubfolders.put(folderName, cached);
+                        return cached;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        String id = getOrCreateSubfolder(rootId, folderName);
         setter.accept(config, id);
         config.save();
+        validatedSubfolders.put(folderName, id);
         return id;
     }
 
@@ -220,6 +241,7 @@ public class DriveFolderManager {
 
     public void clearCache() {
         fileIdCache.clear();
+        validatedSubfolders.clear();
     }
 
     // ─── Utilities ────────────────────────────────────────────────────────

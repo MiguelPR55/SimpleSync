@@ -50,18 +50,22 @@ public class FolderSyncTaskTest {
     public void testScanMasaConfigFiles() throws IOException {
         Path configDir = tempDir.resolve("config");
         Path litematicaDir = configDir.resolve("litematica");
+        Path malilibDir = configDir.resolve("malilib");
         Files.createDirectories(litematicaDir);
+        Files.createDirectories(malilibDir);
 
         Files.writeString(configDir.resolve("litematica.json"), "{}");
         Files.writeString(configDir.resolve("malilib.json"), "{}");
         Files.writeString(litematicaDir.resolve("area.json"), "{}");
+        Files.writeString(malilibDir.resolve("options.json"), "{}");
 
         List<FolderSyncTask.LocalFileInfo> scanned = FolderSyncTask.scanMasaConfigFiles(tempDir);
 
-        assertEquals(3, scanned.size());
+        assertEquals(4, scanned.size());
         assertTrue(scanned.stream().anyMatch(f -> f.relativePath().equals("config/litematica.json")));
         assertTrue(scanned.stream().anyMatch(f -> f.relativePath().equals("config/malilib.json")));
         assertTrue(scanned.stream().anyMatch(f -> f.relativePath().equals("config/litematica/area.json")));
+        assertTrue(scanned.stream().anyMatch(f -> f.relativePath().equals("config/malilib/options.json")));
     }
 
     @Test

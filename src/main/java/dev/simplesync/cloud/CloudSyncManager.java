@@ -287,12 +287,14 @@ public class CloudSyncManager {
                     }
                 }
 
+                if (config.syncSchematics || config.syncMasaConfigs) {
+                    syncExtraFilesSync(false);
+                }
+
                 initialSyncCompleted = true;
 
                 if (downloadCount > 0) setStatus(SyncStatus.DONE, "");
                 else clearStatus();
-
-                if (config.syncSchematics || config.syncMasaConfigs) syncExtraFilesAsync();
             } catch (Throwable t) {
                 markInitialSyncCompleted();
                 throw t;
@@ -531,6 +533,10 @@ public class CloudSyncManager {
     }
 
     public void syncExtraFilesSync() throws IOException {
+        syncExtraFilesSync(true);
+    }
+
+    public void syncExtraFilesSync(boolean clearStatusWhenDone) throws IOException {
         CloudProvider cloud = getProvider();
         if (!ensureAuthenticated(cloud, this::syncExtraFilesAsync)) return;
         SyncConfig config = SyncConfig.load();
@@ -552,7 +558,9 @@ public class CloudSyncManager {
                 SyncLogger.error("[SimpleSync] Masa configs sync failed", e);
             }
         }
-        clearStatus();
+        if (clearStatusWhenDone) {
+            clearStatus();
+        }
     }
 
     public CompletableFuture<Void> syncExtraFilesAsync() {

@@ -3,6 +3,7 @@ package dev.simplesync.cloud;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.simplesync.compat.litematica.LitematicaPathNormalizer;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.FolderSyncTask;
 import dev.simplesync.util.RetryUtil;
@@ -155,17 +156,34 @@ public class DriveSyncEngine {
         String parentFolderId = resolveOrCreateRemoteFolderPath(parentRelPath, rootFolderId, folderMap);
         String existingFileId = remoteFileIdMap.get(relPath);
 
+        byte[] customBytes = null;
+        if (LitematicaPathNormalizer.isLitematicaConfigFile(relPath)) {
+            try {
+                Path schematicsDir = localBaseDir.resolve("schematics");
+                String rawJson = Files.readString(local.fullPath());
+                String portableJson = LitematicaPathNormalizer.toPortableJson(rawJson, schematicsDir, localBaseDir);
+                customBytes = portableJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                SyncLogger.warn("[SimpleSync] Failed to portableize Litematica config {}: {}", relPath, e.getMessage());
+            }
+        }
+
         if (existingFileId != null) {
             String url = "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=media";
+            HttpRequest.BodyPublisher bodyPublisher = customBytes != null
+                    ? HttpRequest.BodyPublishers.ofByteArray(customBytes)
+                    : HttpRequest.BodyPublishers.ofFile(local.fullPath());
+
             HttpRequest.Builder req = api.authedRequest(url, Duration.ofSeconds(60))
-                    .method("PATCH", HttpRequest.BodyPublishers.ofFile(local.fullPath()))
+                    .method("PATCH", bodyPublisher)
                     .header("Content-Type", "application/octet-stream");
             HttpResponse<String> resp = api.send(req, 3);
             if (resp.statusCode() != 200) {
                 throw new IOException("Failed to update file " + relPath + ": HTTP " + resp.statusCode());
             }
         } else {
-            if (local.size() > 5L * 1024 * 1024) {
+            long fileSize = customBytes != null ? customBytes.length : local.size();
+            if (fileSize > 5L * 1024 * 1024 && customBytes == null) {
                 // Resumable streaming upload for larger files
                 String initUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
                 JsonObject meta = new JsonObject();
@@ -198,7 +216,7 @@ public class DriveSyncEngine {
                     throw new IOException("Failed to upload new file " + relPath + ": HTTP " + putResp.statusCode());
                 }
             } else {
-                byte[] fileBytes = Files.readAllBytes(local.fullPath());
+                byte[] fileBytes = customBytes != null ? customBytes : Files.readAllBytes(local.fullPath());
                 String boundary = "SimpleSyncBoundary" + System.currentTimeMillis();
 
                 JsonObject meta = new JsonObject();
@@ -249,11 +267,22 @@ public class DriveSyncEngine {
             throw e;
         }
 
-        if (expectedSize > 0) {
+        if (expectedSize > 0 && !LitematicaPathNormalizer.isLitematicaConfigFile(remote.relativePath())) {
             long actualSize = Files.size(tempFile);
             if (actualSize != expectedSize) {
                 Files.deleteIfExists(tempFile);
                 throw new IOException("Download size mismatch for " + remote.relativePath() + ": expected " + expectedSize + " bytes, got " + actualSize + " bytes");
+            }
+        }
+
+        if (LitematicaPathNormalizer.isLitematicaConfigFile(remote.relativePath())) {
+            try {
+                Path schematicsDir = localBaseDir.resolve("schematics");
+                String rawJson = Files.readString(tempFile);
+                String localJson = LitematicaPathNormalizer.toLocalJson(rawJson, schematicsDir, localBaseDir);
+                Files.writeString(tempFile, localJson, StandardOpenOption.TRUNCATE_EXISTING);
+            } catch (Exception e) {
+                SyncLogger.warn("[SimpleSync] Failed to localize downloaded Litematica config {}: {}", remote.relativePath(), e.getMessage());
             }
         }
 
