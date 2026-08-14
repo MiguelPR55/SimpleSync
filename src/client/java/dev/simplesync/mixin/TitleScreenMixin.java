@@ -28,6 +28,7 @@ public class TitleScreenMixin {
                 SyncLogger.info("[SimpleSync] Title screen opened, starting cloud sync...");
                 CloudSyncManager.getInstance().syncAllWorldsFromCloud();
             } else {
+                CloudSyncManager.getInstance().markInitialSyncCompleted();
                 CompletableFuture.runAsync(() -> {
                     WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
                 }, CloudSyncManager.getInstance().getExecutor());

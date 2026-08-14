@@ -31,23 +31,39 @@ public abstract class WorldListEntryMixin {
 
     @Inject(method = "joinWorld", at = @At("HEAD"), cancellable = true)
     private void onJoinWorld(CallbackInfo ci) {
-        SyncStatus status = CloudSyncManager.getInstance().getStatus();
-        if (status.isBusy()) {
-            SyncLogger.warn("[SimpleSync] Prevented joining world because cloud sync is active: {}", status);
+        String worldId = this.summary.getLevelId();
+        String worldName = this.summary.getLevelName();
+        String displayName = (worldName != null && !worldName.isEmpty()) ? worldName : worldId;
+        CloudSyncManager syncManager = CloudSyncManager.getInstance();
+
+        if (syncManager.isWorldBusy(worldId)) {
+            SyncLogger.warn("[SimpleSync] Prevented joining world '{}' because it is actively transferring.", worldId);
+            dev.simplesync.ui.SyncToast.showWorldSyncingToast(displayName);
             ci.cancel();
+            return;
+        }
+
+        if (!syncManager.isWorldSynchronized(worldId)) {
+            SyncLogger.warn("[SimpleSync] Prevented joining world '{}' because it is not yet synchronized.", worldId);
+            dev.simplesync.ui.SyncToast.showWorldPendingToast(displayName);
+            ci.cancel();
+            return;
         }
     }
 
     @Inject(method = "deleteWorld", at = @At("HEAD"), cancellable = true)
     private void onDeleteWorld(CallbackInfo ci) {
-        SyncStatus status = CloudSyncManager.getInstance().getStatus();
-        if (status.isBusy()) {
-            SyncLogger.warn("[SimpleSync] Prevented deleting world because cloud sync is active: {}", status);
+        String worldId = this.summary.getLevelId();
+        String worldName = this.summary.getLevelName();
+        String displayName = (worldName != null && !worldName.isEmpty()) ? worldName : worldId;
+        CloudSyncManager syncManager = CloudSyncManager.getInstance();
+
+        if (syncManager.isWorldBusy(worldId)) {
+            SyncLogger.warn("[SimpleSync] Prevented deleting world because it is actively transferring: {}", worldId);
+            dev.simplesync.ui.SyncToast.showWorldSyncingToast(displayName);
             ci.cancel();
             return;
         }
-        String worldId = this.summary.getLevelId();
-        String worldName = this.summary.getLevelName();
 
         this.minecraft.gui.setScreen(new DeleteWorldConfirmScreen(
                 (result, deleteFromDrive) -> {

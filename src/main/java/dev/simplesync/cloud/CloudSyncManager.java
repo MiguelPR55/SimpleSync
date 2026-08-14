@@ -10,7 +10,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,6 +25,10 @@ public class CloudSyncManager {
     private final ExecutorService executor;
     private final AtomicReference<StatusSnapshot> status;
     private final List<Runnable> pendingAuthCallbacks = new CopyOnWriteArrayList<>();
+    private final Set<String> synchronizedWorlds = ConcurrentHashMap.newKeySet();
+    private final Set<String> pendingSyncWorlds = ConcurrentHashMap.newKeySet();
+    private volatile String currentSyncingWorld = null;
+    private volatile boolean initialSyncCompleted = false;
     private volatile CloudProvider provider;
     private volatile Path savesDirectory;
     private volatile ConflictCallback conflictCallback;
@@ -60,6 +66,14 @@ public class CloudSyncManager {
             }
         }
         return instance;
+    }
+
+    public void resetStateForTests() {
+        this.synchronizedWorlds.clear();
+        this.pendingSyncWorlds.clear();
+        this.currentSyncingWorld = null;
+        this.initialSyncCompleted = false;
+        this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
     }
 
     public CloudProvider getProvider() {
@@ -111,6 +125,79 @@ public class CloudSyncManager {
         }
     }
 
+    public boolean isWorldSynchronized(String worldName) {
+        if (worldName == null) return false;
+        SyncConfig config = SyncConfig.load();
+        if (!config.autoSyncOnStart && initialSyncCompleted) {
+            return true;
+        }
+        if (isWorldBusy(worldName)) {
+            return false;
+        }
+        return synchronizedWorlds.contains(worldName);
+    }
+
+    public boolean isWorldBusy(String worldName) {
+        if (worldName == null) return false;
+        String current = currentSyncingWorld;
+        if (current != null && current.equals(worldName)) return true;
+        StatusSnapshot snap = getStatusSnapshot();
+        if (snap.status().isBusy() && snap.detail() != null) {
+            String detail = snap.detail();
+            int pIdx = detail.indexOf(" (");
+            String base = pIdx > 0 ? detail.substring(0, pIdx) : detail;
+            if (worldName.equals(base)) return true;
+        }
+        return false;
+    }
+
+    public boolean isInitialSyncCompleted() {
+        return initialSyncCompleted;
+    }
+
+    public void markInitialSyncCompleted() {
+        this.initialSyncCompleted = true;
+        Path savesDir = getSavesDirectory();
+        if (Files.isDirectory(savesDir)) {
+            try (var stream = Files.list(savesDir)) {
+                stream.filter(Files::isDirectory)
+                      .map(p -> p.getFileName().toString())
+                      .filter(WorldSyncTask::isWorldNameSafe)
+                      .forEach(synchronizedWorlds::add);
+            } catch (IOException ignored) {}
+        }
+        pendingSyncWorlds.clear();
+    }
+
+    public void markWorldSynchronized(String worldName) {
+        if (worldName != null) {
+            synchronizedWorlds.add(worldName);
+            pendingSyncWorlds.remove(worldName);
+            if (worldName.equals(currentSyncingWorld)) {
+                currentSyncingWorld = null;
+            }
+        }
+    }
+
+    public void markWorldUnsynchronized(String worldName) {
+        if (worldName != null) {
+            synchronizedWorlds.remove(worldName);
+            pendingSyncWorlds.add(worldName);
+        }
+    }
+
+    public String getCurrentSyncingWorld() {
+        return currentSyncingWorld;
+    }
+
+    public Set<String> getSynchronizedWorlds() {
+        return Collections.unmodifiableSet(synchronizedWorlds);
+    }
+
+    public Set<String> getPendingSyncWorlds() {
+        return Collections.unmodifiableSet(pendingSyncWorlds);
+    }
+
     // ─── Sync All Worlds ──────────────────────────────────────────────────
 
     public CompletableFuture<Void> syncAllWorldsFromCloud() {
@@ -118,32 +205,102 @@ public class CloudSyncManager {
             CloudProvider cloud = getProvider();
             if (!ensureAuthenticated(cloud, this::syncAllWorldsFromCloud)) return;
 
-            setStatus(SyncStatus.CHECKING, "");
-            List<WorldMetadata> cloudWorlds = cloud.listWorlds();
-            Path savesDir = getSavesDirectory();
-            WorldSyncTask.cleanupOrphanedDirectories(savesDir);
-            SyncConfig config = SyncConfig.load();
-            int downloadCount = 0;
+            try {
+                setStatus(SyncStatus.CHECKING, "");
+                Path savesDir = getSavesDirectory();
+                WorldSyncTask.cleanupOrphanedDirectories(savesDir);
 
-            for (WorldMetadata cw : cloudWorlds) {
-                try {
-                    if (processSingleCloudWorld(cloud, savesDir, config, cw)) downloadCount++;
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    SyncLogger.error("[SimpleSync] Failed to process '{}', skipping", cw.worldName(), e);
+                // Populate pendingSyncWorlds initially with existing local saves
+                if (Files.isDirectory(savesDir)) {
+                    try (var stream = Files.list(savesDir)) {
+                        stream.filter(Files::isDirectory)
+                              .map(p -> p.getFileName().toString())
+                              .filter(WorldSyncTask::isWorldNameSafe)
+                              .forEach(pendingSyncWorlds::add);
+                    } catch (IOException e) {
+                        SyncLogger.warn("[SimpleSync] Failed to list saves directory", e);
+                    }
                 }
+
+                List<WorldMetadata> cloudWorlds = cloud.listWorlds();
+                if (cloudWorlds != null) {
+                    for (WorldMetadata meta : cloudWorlds) {
+                        if (WorldSyncTask.isWorldNameSafe(meta.worldName())) {
+                            pendingSyncWorlds.add(meta.worldName());
+                        }
+                    }
+                }
+
+                SyncConfig config = SyncConfig.load();
+                int downloadCount = 0;
+
+                if (cloudWorlds != null) {
+                    for (WorldMetadata cw : cloudWorlds) {
+                        String wName = cw.worldName();
+                        if (dev.simplesync.SimpleSync.isWorldRunning(wName)) {
+                            SyncLogger.info("[SimpleSync] World '{}' is currently running in-game. Skipping background sync.", wName);
+                            continue;
+                        }
+                        try {
+                            currentSyncingWorld = wName;
+                            if (processSingleCloudWorld(cloud, savesDir, config, cw, true)) {
+                                downloadCount++;
+                            }
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        } catch (Exception e) {
+                            SyncLogger.error("[SimpleSync] Failed to process '{}', skipping", wName, e);
+                        } finally {
+                            markWorldSynchronized(wName);
+                            if (wName.equals(currentSyncingWorld)) {
+                                currentSyncingWorld = null;
+                            }
+                        }
+                    }
+                }
+
+                // Check remaining local-only worlds
+                List<String> remainingLocal = new ArrayList<>(pendingSyncWorlds);
+                for (String localName : remainingLocal) {
+                    if (dev.simplesync.SimpleSync.isWorldRunning(localName)) {
+                        continue;
+                    }
+                    Path localFolder = savesDir.resolve(localName);
+                    if (Files.isDirectory(localFolder)) {
+                        try {
+                            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(localFolder);
+                            if (WorldSyncTask.isLocalWorldModified(localFolder, config, localName, stats)) {
+                                currentSyncingWorld = localName;
+                                uploadWorldSync(localName, true);
+                            }
+                        } catch (Exception e) {
+                            SyncLogger.error("[SimpleSync] Failed to process local-only world '{}'", localName, e);
+                        } finally {
+                            markWorldSynchronized(localName);
+                            if (localName.equals(currentSyncingWorld)) {
+                                currentSyncingWorld = null;
+                            }
+                        }
+                    } else {
+                        pendingSyncWorlds.remove(localName);
+                    }
+                }
+
+                initialSyncCompleted = true;
+
+                if (downloadCount > 0) setStatus(SyncStatus.DONE, "");
+                else clearStatus();
+
+                if (config.syncSchematics || config.syncMasaConfigs) syncExtraFilesAsync();
+            } catch (Throwable t) {
+                markInitialSyncCompleted();
+                throw t;
             }
-
-            if (downloadCount > 0) setStatus(SyncStatus.DONE, "");
-            else clearStatus();
-
-            if (config.syncSchematics || config.syncMasaConfigs) syncExtraFilesAsync();
         });
     }
 
-    private boolean processSingleCloudWorld(CloudProvider cloud, Path savesDir, SyncConfig config, WorldMetadata cw) throws Exception {
+    private boolean processSingleCloudWorld(CloudProvider cloud, Path savesDir, SyncConfig config, WorldMetadata cw, boolean isBatch) throws Exception {
         String worldName = cw.worldName();
         if (!WorldSyncTask.isWorldNameSafe(worldName)) return false;
 
@@ -165,7 +322,7 @@ public class CloudSyncManager {
             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
             if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
                 boolean useCloud = resolveConflict(worldName, stats, cw.lastModified());
-                if (!useCloud) { uploadWorldSync(worldName); return false; }
+                if (!useCloud) { uploadWorldSync(worldName, isBatch); return false; }
             }
 
             downloadAndExtract(cloud, worldName, worldFolder, config, cw.lastModified());
@@ -173,7 +330,7 @@ public class CloudSyncManager {
         } else {
             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
             if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
-                uploadWorldSync(worldName);
+                uploadWorldSync(worldName, isBatch);
             }
             return false;
         }
@@ -225,6 +382,10 @@ public class CloudSyncManager {
     }
 
     public void uploadWorldSync(String worldName) throws IOException {
+        uploadWorldSync(worldName, false);
+    }
+
+    public void uploadWorldSync(String worldName, boolean isBatch) throws IOException {
         if (!WorldSyncTask.isWorldNameSafe(worldName)) {
             setStatus(SyncStatus.ERROR, "Invalid world name");
             return;
@@ -240,10 +401,15 @@ public class CloudSyncManager {
             return;
         }
 
+        currentSyncingWorld = worldName;
+        synchronizedWorlds.remove(worldName);
+        pendingSyncWorlds.add(worldName);
+
         SyncConfig config = SyncConfig.load();
         WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
         if (!WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
-            setStatus(SyncStatus.DONE, "");
+            markWorldSynchronized(worldName);
+            if (!isBatch) setStatus(SyncStatus.DONE, "");
             return;
         }
 
@@ -251,30 +417,39 @@ public class CloudSyncManager {
             throw new IOException("World exceeds 50 GB limit");
         }
 
-        setStatus(SyncStatus.COMPRESSING, worldName);
-        Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
         try {
-            WorldSyncTask.compressWorld(worldFolder, tempArchive);
-            long archiveSize = Files.size(tempArchive);
-            if (archiveSize > 50L * 1024 * 1024 * 1024) throw new IOException("Compressed archive exceeds 50 GB");
-
-            setStatus(SyncStatus.UPLOADING, worldName);
-            WorldMetadata uploaded;
+            setStatus(SyncStatus.COMPRESSING, worldName);
+            Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
             try {
-                uploaded = cloud.upload(worldName, tempArchive);
-            } catch (IOException uploadEx) {
-                // Verify if file actually reached cloud
-                WorldMetadata verify = cloud.getWorldMetadata(worldName);
-                if (verify == null || verify.sizeBytes() != archiveSize) throw uploadEx;
-                uploaded = verify;
-            }
+                WorldSyncTask.compressWorld(worldFolder, tempArchive);
+                long archiveSize = Files.size(tempArchive);
+                if (archiveSize > 50L * 1024 * 1024 * 1024) throw new IOException("Compressed archive exceeds 50 GB");
 
-            long newTs = uploaded != null && uploaded.lastModified() > 0 ? uploaded.lastModified() : System.currentTimeMillis();
-            updateTracking(config, worldName, worldFolder, newTs);
-            config.save();
-            setStatus(SyncStatus.DONE, "");
-        } finally {
-            deleteQuietly(tempArchive);
+                setStatus(SyncStatus.UPLOADING, worldName);
+                WorldMetadata uploaded;
+                try {
+                    uploaded = cloud.upload(worldName, tempArchive);
+                } catch (IOException uploadEx) {
+                    // Verify if file actually reached cloud
+                    WorldMetadata verify = cloud.getWorldMetadata(worldName);
+                    if (verify == null || verify.sizeBytes() != archiveSize) throw uploadEx;
+                    uploaded = verify;
+                }
+
+                long newTs = uploaded != null && uploaded.lastModified() > 0 ? uploaded.lastModified() : System.currentTimeMillis();
+                updateTracking(config, worldName, worldFolder, newTs);
+                config.save();
+                markWorldSynchronized(worldName);
+                if (!isBatch) setStatus(SyncStatus.DONE, "");
+            } finally {
+                deleteQuietly(tempArchive);
+                if (worldName.equals(currentSyncingWorld)) {
+                    currentSyncingWorld = null;
+                }
+            }
+        } catch (Throwable t) {
+            markWorldSynchronized(worldName);
+            throw t;
         }
     }
 
@@ -291,6 +466,8 @@ public class CloudSyncManager {
                 CloudProvider cloud = getProvider();
                 if (!cloud.isAuthenticated()) { setStatus(SyncStatus.ERROR, "Not authenticated"); return false; }
                 cloud.delete(worldName);
+                synchronizedWorlds.remove(worldName);
+                pendingSyncWorlds.remove(worldName);
                 SyncConfig config = SyncConfig.load();
                 config.removeTracking(worldName);
                 if (config.ignoredCloudWorlds != null) config.ignoredCloudWorlds.remove(worldName);
@@ -317,6 +494,10 @@ public class CloudSyncManager {
             WorldMetadata meta = cloud.getWorldMetadata(worldName);
             if (meta == null) throw new IOException("World not found in cloud");
 
+            currentSyncingWorld = worldName;
+            synchronizedWorlds.remove(worldName);
+            pendingSyncWorlds.add(worldName);
+
             setStatus(SyncStatus.DOWNLOADING, worldName);
             Path temp = getTempDir().resolve(worldName + "-restore.tar.zst");
             try {
@@ -326,10 +507,14 @@ public class CloudSyncManager {
                 SyncConfig config = SyncConfig.load();
                 updateTracking(config, worldName, worldFolder, meta.lastModified());
                 config.save();
+                markWorldSynchronized(worldName);
                 setStatus(SyncStatus.DONE, "");
                 if (onComplete != null) onComplete.run();
             } finally {
                 deleteQuietly(temp);
+                if (worldName.equals(currentSyncingWorld)) {
+                    currentSyncingWorld = null;
+                }
             }
         });
     }
@@ -352,13 +537,22 @@ public class CloudSyncManager {
         Path gameRoot = getGameRootDir();
 
         if (config.syncSchematics) {
-            try { cloud.syncSchematics(gameRoot); }
-            catch (Exception e) { SyncLogger.error("[SimpleSync] Schematics sync failed", e); }
+            try {
+                setStatus(SyncStatus.CHECKING, "Schematics");
+                cloud.syncSchematics(gameRoot);
+            } catch (Exception e) {
+                SyncLogger.error("[SimpleSync] Schematics sync failed", e);
+            }
         }
         if (config.syncMasaConfigs) {
-            try { cloud.syncMasaConfigs(gameRoot); }
-            catch (Exception e) { SyncLogger.error("[SimpleSync] Masa configs sync failed", e); }
+            try {
+                setStatus(SyncStatus.CHECKING, "Masa Configs");
+                cloud.syncMasaConfigs(gameRoot);
+            } catch (Exception e) {
+                SyncLogger.error("[SimpleSync] Masa configs sync failed", e);
+            }
         }
+        clearStatus();
     }
 
     public CompletableFuture<Void> syncExtraFilesAsync() {

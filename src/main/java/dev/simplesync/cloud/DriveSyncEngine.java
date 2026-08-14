@@ -15,8 +15,10 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
@@ -237,26 +239,33 @@ public class DriveSyncEngine {
         }
 
         long expectedSize = resp.headers().firstValueAsLong("Content-Length").orElse(remote.size());
+        Path tempFile = targetFile.resolveSibling(targetFile.getFileName().toString() + ".tmp");
 
         try (InputStream is = resp.body();
-             OutputStream os = Files.newOutputStream(targetFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+             OutputStream os = Files.newOutputStream(tempFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
             is.transferTo(os);
         } catch (IOException e) {
-            try { Files.deleteIfExists(targetFile); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             throw e;
         }
 
         if (expectedSize > 0) {
-            long actualSize = Files.size(targetFile);
+            long actualSize = Files.size(tempFile);
             if (actualSize != expectedSize) {
-                Files.deleteIfExists(targetFile);
+                Files.deleteIfExists(tempFile);
                 throw new IOException("Download size mismatch for " + remote.relativePath() + ": expected " + expectedSize + " bytes, got " + actualSize + " bytes");
             }
         }
 
         if (remote.lastModified() > 0) {
-            try { Files.setLastModifiedTime(targetFile, FileTime.fromMillis(remote.lastModified())); }
+            try { Files.setLastModifiedTime(tempFile, FileTime.fromMillis(remote.lastModified())); }
             catch (IOException ignored) {}
+        }
+
+        try {
+            Files.move(tempFile, targetFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tempFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 

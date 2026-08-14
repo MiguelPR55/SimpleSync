@@ -11,6 +11,7 @@ public class SimpleSync implements ModInitializer {
 
     public static final String MOD_ID = "simplesync";
     private static volatile String lastWorldName = null;
+    private static volatile String activeRunningWorld = null;
     public static final java.util.concurrent.atomic.AtomicBoolean needsTitleScreenSync = new java.util.concurrent.atomic.AtomicBoolean(true);
 
     @Override
@@ -23,21 +24,29 @@ public class SimpleSync implements ModInitializer {
                 String name = server.getWorldPath(LevelResource.ROOT).normalize().getFileName().toString();
                 if (dev.simplesync.sync.WorldSyncTask.isWorldNameSafe(name)) {
                     lastWorldName = name;
+                    activeRunningWorld = name;
                     SyncLogger.info("[SimpleSync] World starting: {}", lastWorldName);
                 } else {
                     SyncLogger.warn("[SimpleSync] World folder name '{}' is unsafe for cloud sync. Skipping auto-sync.", name);
                     lastWorldName = null;
+                    activeRunningWorld = null;
                 }
             }
         });
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            activeRunningWorld = null;
             if (server.isDedicatedServer() || lastWorldName == null) return;
             needsTitleScreenSync.set(false);
+            String stoppedWorld = lastWorldName;
+            CloudSyncManager.getInstance().markWorldUnsynchronized(stoppedWorld);
+
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnExit) {
-                SyncLogger.info("[SimpleSync] World stopped: {}. Uploading...", lastWorldName);
-                CloudSyncManager.getInstance().uploadWorldAsync(lastWorldName);
+                SyncLogger.info("[SimpleSync] World stopped: {}. Uploading...", stoppedWorld);
+                CloudSyncManager.getInstance().uploadWorldAsync(stoppedWorld);
+            } else {
+                CloudSyncManager.getInstance().markWorldSynchronized(stoppedWorld);
             }
             if (config.syncSchematics || config.syncMasaConfigs) {
                 CloudSyncManager.getInstance().syncExtraFilesAsync();
@@ -75,4 +84,8 @@ public class SimpleSync implements ModInitializer {
     }
 
     public static String getLastWorldName() { return lastWorldName; }
+    public static String getActiveRunningWorld() { return activeRunningWorld; }
+    public static boolean isWorldRunning(String name) {
+        return name != null && name.equals(activeRunningWorld);
+    }
 }
