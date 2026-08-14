@@ -1,7 +1,7 @@
 package dev.simplesync.util;
 
-import dev.simplesync.SimpleSync;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -11,11 +11,18 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
-public class RetryUtil {
+/**
+ * Utility for exponential backoff retries, URL parameter encoding, and form posts.
+ */
+public final class RetryUtil {
+
+    private RetryUtil() {}
 
     public static String formEncode(Map<String, String> params) {
+        if (params == null || params.isEmpty()) return "";
         return params.entrySet().stream()
                 .filter(e -> e.getValue() != null && !e.getValue().isEmpty())
                 .map(e -> urlEncode(e.getKey()) + "=" + urlEncode(e.getValue()))
@@ -32,34 +39,20 @@ public class RetryUtil {
                 throw new IOException(operationName + " interrupted", e);
             } catch (IOException e) {
                 lastError = e;
-                if (e.getMessage() != null && (e.getMessage().contains("invalid_grant") || e.getMessage().contains("invalid_token") || e.getMessage().contains("permanently revoked"))) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Fatal authentication error (not retrying): {}", e.getMessage());
+                if (isFatalAuthError(e.getMessage())) {
+                    SyncLogger.error("[SimpleSync] Fatal authentication error (not retrying): {}", e.getMessage());
                     throw e;
                 }
-                SimpleSync.LOGGER.warn("[SimpleSync] {} attempt {}/{} failed: {}", operationName, attempt, maxAttempts, e.getMessage());
+                SyncLogger.warn("[SimpleSync] {} attempt {}/{} failed: {}", operationName, attempt, maxAttempts, e.getMessage());
                 if (attempt < maxAttempts) {
-                    try {
-                        long baseDelay = 1000L * (1L << (attempt - 1));
-                        long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                        Thread.sleep(Math.max(100L, baseDelay + jitter));
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException(operationName + " interrupted during retry delay", ie);
-                    }
+                    sleepWithBackoff(attempt, operationName);
                 }
             } catch (Exception e) {
-                if (e instanceof java.io.UncheckedIOException uioe) {
+                if (e instanceof UncheckedIOException uioe) {
                     lastError = uioe.getCause();
-                    SimpleSync.LOGGER.warn("[SimpleSync] {} attempt {}/{} failed (UncheckedIOException): {}", operationName, attempt, maxAttempts, lastError.getMessage());
+                    SyncLogger.warn("[SimpleSync] {} attempt {}/{} failed (UncheckedIOException): {}", operationName, attempt, maxAttempts, lastError.getMessage());
                     if (attempt < maxAttempts) {
-                        try {
-                            long baseDelay = 1000L * (1L << (attempt - 1));
-                            long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
-                            Thread.sleep(Math.max(100L, baseDelay + jitter));
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            throw new IOException(operationName + " interrupted during retry delay", ie);
-                        }
+                        sleepWithBackoff(attempt, operationName);
                     }
                 } else if (e instanceof RuntimeException re) {
                     throw re;
@@ -93,6 +86,21 @@ public class RetryUtil {
 
     public static String urlEncode(String s) {
         return s != null ? URLEncoder.encode(s, StandardCharsets.UTF_8) : "";
+    }
+
+    private static boolean isFatalAuthError(String msg) {
+        return msg != null && (msg.contains("invalid_grant") || msg.contains("invalid_token") || msg.contains("permanently revoked"));
+    }
+
+    private static void sleepWithBackoff(int attempt, String operationName) throws IOException {
+        try {
+            long baseDelay = 1000L * (1L << (attempt - 1));
+            long jitter = ThreadLocalRandom.current().nextLong(-baseDelay / 5, baseDelay / 5 + 1);
+            Thread.sleep(Math.max(100L, baseDelay + jitter));
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IOException(operationName + " interrupted during retry delay", ie);
+        }
     }
 
     @FunctionalInterface

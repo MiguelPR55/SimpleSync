@@ -2,13 +2,14 @@ package dev.simplesync.cloud;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 
 public class TokenStore {
 
@@ -54,7 +55,7 @@ public class TokenStore {
 
     private static void trySetPermissions(Path path, String posixPermissions) {
         try {
-            Files.setPosixFilePermissions(path, java.nio.file.attribute.PosixFilePermissions.fromString(posixPermissions));
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(posixPermissions));
         } catch (UnsupportedOperationException | IOException ignored) {}
     }
 
@@ -68,7 +69,7 @@ public class TokenStore {
                 String json = Files.readString(tokensFile);
                 return GSON.fromJson(json, TokenData.class);
             } catch (Exception e) {
-                SimpleSync.LOGGER.error("[SimpleSync] Failed to load stored tokens", e);
+                SyncLogger.error("[SimpleSync] Failed to load stored tokens", e);
                 return null;
             }
         }

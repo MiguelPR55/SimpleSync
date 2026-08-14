@@ -2,6 +2,7 @@ package dev.simplesync;
 
 import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.ui.SyncStatusOverlay;
+import dev.simplesync.util.SyncLogger;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
@@ -11,7 +12,7 @@ import net.minecraft.resources.Identifier;
 public class SimpleSyncClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
-        SimpleSync.LOGGER.info("[SimpleSync] Initializing client...");
+        SyncLogger.info("[SimpleSync] Initializing client...");
         preloadClientClasses();
         
         // Pass the actual Minecraft runDirectory to CloudSyncManager
@@ -62,7 +63,7 @@ public class SimpleSyncClient implements ClientModInitializer {
             try {
                 Class.forName(cls, true, SimpleSyncClient.class.getClassLoader());
             } catch (ClassNotFoundException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Preloading failed for client class: {}", cls);
+                SyncLogger.warn("[SimpleSync] Preloading failed for client class: {}", cls);
             }
         }
     }

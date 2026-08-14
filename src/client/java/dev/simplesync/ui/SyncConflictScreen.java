@@ -10,6 +10,7 @@ import net.minecraft.network.chat.Component;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Screen shown when there is a conflict between the local and cloud versions of a world.
@@ -17,12 +18,15 @@ import java.time.format.DateTimeFormatter;
  */
 public class SyncConflictScreen extends Screen {
 
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withZone(ZoneId.systemDefault());
+
     private final String worldName;
     private final Runnable onUseCloud;
     private final Runnable onKeepLocal;
     private final String formattedLocalDate;
     private final String formattedCloudDate;
-    private final java.util.concurrent.atomic.AtomicBoolean resolved = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final AtomicBoolean resolved = new AtomicBoolean(false);
 
     public SyncConflictScreen(String worldName, long localTimestamp, long cloudTimestamp,
                               Runnable onUseCloud, Runnable onKeepLocal) {
@@ -31,11 +35,9 @@ public class SyncConflictScreen extends Screen {
         this.onUseCloud = onUseCloud;
         this.onKeepLocal = onKeepLocal;
 
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                .withZone(ZoneId.systemDefault());
         String unknownText = Component.translatable("simplesync.conflict.unknown").getString();
-        this.formattedLocalDate = localTimestamp > 0 ? dtf.format(Instant.ofEpochMilli(localTimestamp)) : unknownText;
-        this.formattedCloudDate = cloudTimestamp > 0 ? dtf.format(Instant.ofEpochMilli(cloudTimestamp)) : unknownText;
+        this.formattedLocalDate = localTimestamp > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(localTimestamp)) : unknownText;
+        this.formattedCloudDate = cloudTimestamp > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(cloudTimestamp)) : unknownText;
     }
 
     @Override

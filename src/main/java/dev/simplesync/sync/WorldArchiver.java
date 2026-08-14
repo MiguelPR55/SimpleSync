@@ -1,6 +1,6 @@
 package dev.simplesync.sync;
 
-import dev.simplesync.SimpleSync;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.*;
 import java.nio.file.*;
@@ -8,17 +8,21 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
-import org.apache.commons.compress.archivers.tar.*;
-import org.apache.commons.compress.compressors.zstandard.*;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import com.github.luben.zstd.ZstdInputStream;
+import com.github.luben.zstd.ZstdOutputStream;
 
 /**
- * Handles compression and extraction of world archives (tar.zst and zip).
- * Unified logic with format-specific readers/writers behind a common interface.
+ * Handles high-performance compression and extraction of world archives (tar.zst and zip).
+ * Features multithreaded Zstandard compression, reusable buffers, and safe atomic extraction.
  */
 public class WorldArchiver {
 
-    private static final int BUFFER_SIZE = 262_144;
-    private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024;
+    private static final int BUFFER_SIZE = 262_144; // 256 KB
+    private static final int ZSTD_COMPRESSION_LEVEL = 3; // Best speed-to-ratio for real-time game saves
+    private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB zip-bomb limit
     private static final String SUFFIX_STAGING = "_staging";
     private static final String SUFFIX_BACKUP = "_backup";
     private static final String SUFFIX_SYNCING = ".syncing";
@@ -32,7 +36,7 @@ public class WorldArchiver {
         if (Files.isSymbolicLink(outputArchive)) throw new IOException("Refusing to write through symlink");
         Files.deleteIfExists(outputArchive);
 
-        SimpleSync.LOGGER.info("[SimpleSync] Compressing: {} -> {}", worldFolder, outputArchive);
+        SyncLogger.info("[SimpleSync] Compressing: {} -> {}", worldFolder, outputArchive);
         try {
             boolean isZip = outputArchive.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".zip");
             if (isZip) {
@@ -58,7 +62,7 @@ public class WorldArchiver {
         Path backupDir = target.resolveSibling(target.getFileName() + SUFFIX_BACKUP);
         Path syncingMarker = target.resolveSibling(target.getFileName() + SUFFIX_SYNCING);
 
-        SimpleSync.LOGGER.info("[SimpleSync] Extracting: {} -> {}", archiveFile, target);
+        SyncLogger.info("[SimpleSync] Extracting: {} -> {}", archiveFile, target);
         Files.writeString(syncingMarker, "syncing");
 
         if (Files.isDirectory(stagingDir)) deleteRecursively(stagingDir);
@@ -103,9 +107,10 @@ public class WorldArchiver {
         }
     }
 
-    // ─── Unified Extraction (eliminates duplication) ──────────────────────
+    // ─── Unified Extraction ───────────────────────────────────────────────
 
     private static void extractEntries(Path archiveFile, Path stagingDir, ArchiveFormat format) throws IOException {
+        byte[] buffer = new byte[BUFFER_SIZE];
         try (InputStream fis = new BufferedInputStream(Files.newInputStream(archiveFile), BUFFER_SIZE);
              ArchiveEntryReader reader = createReader(fis, format)) {
 
@@ -128,8 +133,8 @@ public class WorldArchiver {
                 } else {
                     if (entryPath.getParent() != null) Files.createDirectories(entryPath.getParent());
                     if (Files.isSymbolicLink(entryPath)) Files.delete(entryPath);
-                    try (OutputStream os = Files.newOutputStream(entryPath)) {
-                        totalExtracted = copyWithLimit(reader.currentStream(), os, totalExtracted);
+                    try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(entryPath), BUFFER_SIZE)) {
+                        totalExtracted = copyWithLimit(reader.currentStream(), os, buffer, totalExtracted);
                     }
                 }
             }
@@ -160,11 +165,11 @@ public class WorldArchiver {
                 @Override public void close() throws IOException { zis.close(); }
             };
         } else {
-            ZstdCompressorInputStream zis = new ZstdCompressorInputStream(fis);
+            ZstdInputStream zis = new ZstdInputStream(fis);
             TarArchiveInputStream tis = new TarArchiveInputStream(zis);
             return new ArchiveEntryReader() {
                 @Override public ArchiveEntryInfo nextEntry() throws IOException {
-                    TarArchiveEntry entry = tis.getNextTarEntry();
+                    TarArchiveEntry entry = (TarArchiveEntry) tis.getNextEntry();
                     if (entry == null) return null;
                     return new ArchiveEntryInfo(entry.getName(), entry.isDirectory());
                 }
@@ -202,49 +207,64 @@ public class WorldArchiver {
 
     private static void compressZip(Path worldFolder, Path output) throws IOException {
         if (output.getParent() != null) Files.createDirectories(output.getParent());
+        byte[] buffer = new byte[BUFFER_SIZE];
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZipOutputStream(fos)) {
             walkWorld(worldFolder,
-                    (file, name) -> { zos.putNextEntry(new ZipEntry(name)); try (var is = Files.newInputStream(file)) { transfer(is, zos); } zos.closeEntry(); },
-                    (dir, name) -> { zos.putNextEntry(new ZipEntry(name + "/")); zos.closeEntry(); });
+                    (file, name) -> {
+                        zos.putNextEntry(new ZipEntry(name));
+                        try (var is = Files.newInputStream(file)) { transfer(is, zos, buffer); }
+                        zos.closeEntry();
+                    },
+                    (dir, name) -> {
+                        zos.putNextEntry(new ZipEntry(name + "/"));
+                        zos.closeEntry();
+                    });
         }
     }
 
     private static void compressTarZst(Path worldFolder, Path output) throws IOException {
         if (output.getParent() != null) Files.createDirectories(output.getParent());
+        byte[] buffer = new byte[BUFFER_SIZE];
+        int workers = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
+
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
-             var zos = new ZstdCompressorOutputStream(fos);
-             var tos = new TarArchiveOutputStream(zos)) {
-            tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
-            tos.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
-            walkWorld(worldFolder,
-                    (file, name) -> {
-                        var entry = new TarArchiveEntry(name);
-                        entry.setSize(Files.size(file));
-                        try { entry.setModTime(Files.getLastModifiedTime(file)); } catch (Exception ignored) {}
-                        tos.putArchiveEntry(entry);
-                        try (var is = Files.newInputStream(file)) { transfer(is, tos); }
-                        tos.closeArchiveEntry();
-                    },
-                    (dir, name) -> {
-                        var entry = new TarArchiveEntry(name.endsWith("/") ? name : name + "/");
-                        try { entry.setModTime(Files.getLastModifiedTime(dir)); } catch (Exception ignored) {}
-                        tos.putArchiveEntry(entry);
-                        tos.closeArchiveEntry();
-                    });
+             var zos = new ZstdOutputStream(fos, ZSTD_COMPRESSION_LEVEL)) {
+            if (workers > 1) {
+                zos.setWorkers(workers);
+            }
+            try (var tos = new TarArchiveOutputStream(zos)) {
+                tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+                tos.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
+                walkWorld(worldFolder,
+                        (file, name) -> {
+                            var entry = new TarArchiveEntry(name);
+                            entry.setSize(Files.size(file));
+                            try { entry.setModTime(Files.getLastModifiedTime(file)); } catch (Exception ignored) {}
+                            tos.putArchiveEntry(entry);
+                            try (var is = Files.newInputStream(file)) { transfer(is, tos, buffer); }
+                            tos.closeArchiveEntry();
+                        },
+                        (dir, name) -> {
+                            var entry = new TarArchiveEntry(name.endsWith("/") ? name : name + "/");
+                            try { entry.setModTime(Files.getLastModifiedTime(dir)); } catch (Exception ignored) {}
+                            tos.putArchiveEntry(entry);
+                            tos.closeArchiveEntry();
+                        });
+            }
         }
     }
 
     // ─── Utilities ────────────────────────────────────────────────────────
 
-    private static void transfer(InputStream in, OutputStream out) throws IOException {
-        byte[] buf = new byte[BUFFER_SIZE];
+    private static void transfer(InputStream in, OutputStream out, byte[] buf) throws IOException {
         int n;
-        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        while ((n = in.read(buf)) > 0) {
+            out.write(buf, 0, n);
+        }
     }
 
-    private static long copyWithLimit(InputStream in, OutputStream out, long alreadyExtracted) throws IOException {
-        byte[] buf = new byte[BUFFER_SIZE];
+    private static long copyWithLimit(InputStream in, OutputStream out, byte[] buf, long alreadyExtracted) throws IOException {
         int n;
         long total = alreadyExtracted;
         while ((n = in.read(buf)) > 0) {

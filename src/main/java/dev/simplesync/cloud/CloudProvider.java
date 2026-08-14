@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Interface for cloud storage providers.
- * Implementations handle authentication, upload, download, and listing of world backups.
+ * Implementations handle authentication, upload, download, and listing of world backups and extra files.
  */
 public interface CloudProvider {
 
@@ -34,21 +34,21 @@ public interface CloudProvider {
     boolean isAuthenticating();
 
     /**
-     * Uploads a world ZIP file to the cloud.
-     * @param worldName The name of the world
-     * @param zipFile   Path to the ZIP file to upload
+     * Uploads a world archive file (tar.zst or zip) to the cloud.
+     * @param worldName    The name of the world
+     * @param archiveFile  Path to the archive file to upload
      * @return Metadata of the uploaded world (including server authoritative timestamp)
      * @throws IOException if upload fails
      */
-    WorldMetadata upload(String worldName, Path zipFile) throws IOException;
+    WorldMetadata upload(String worldName, Path archiveFile) throws IOException;
 
     /**
-     * Downloads a world ZIP file from the cloud.
-     * @param worldName The name of the world to download
-     * @param outputZip Path where the downloaded ZIP should be saved
+     * Downloads a world archive file from the cloud.
+     * @param worldName     The name of the world to download
+     * @param outputArchive Path where the downloaded archive should be saved
      * @throws IOException if download fails
      */
-    void download(String worldName, Path outputZip) throws IOException;
+    void download(String worldName, Path outputArchive) throws IOException;
 
     /**
      * Lists all worlds available in the cloud.

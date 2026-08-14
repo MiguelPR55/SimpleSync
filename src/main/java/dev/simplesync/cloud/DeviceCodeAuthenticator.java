@@ -2,13 +2,15 @@ package dev.simplesync.cloud;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.simplesync.SimpleSync;
+import dev.simplesync.util.RetryUtil;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -41,9 +43,9 @@ public class DeviceCodeAuthenticator {
             String scope,
             AuthPromptCallback callback
     ) throws IOException, InterruptedException {
-        SimpleSync.LOGGER.info("[SimpleSync] Initiating Google Device Authorization Grant...");
+        SyncLogger.info("[SimpleSync] Initiating Google Device Authorization Grant...");
 
-        String deviceCodeBody = dev.simplesync.util.RetryUtil.formEncode(java.util.Map.of(
+        String deviceCodeBody = RetryUtil.formEncode(Map.of(
                 "client_id", clientId,
                 "scope", scope
         ));
@@ -61,14 +63,14 @@ public class DeviceCodeAuthenticator {
         long expiresIn = deviceResponse.get("expires_in").getAsLong();
         long intervalSeconds = deviceResponse.has("interval") ? deviceResponse.get("interval").getAsLong() : 5;
 
-        SimpleSync.LOGGER.info("[SimpleSync] Device Auth prompt -> URL: {}, Code: {} (Expires in {}s)", verificationUrl, userCode, expiresIn);
+        SyncLogger.info("[SimpleSync] Device Auth prompt -> URL: {}, Code: {} (Expires in {}s)", verificationUrl, userCode, expiresIn);
 
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         final Thread workerThread = Thread.currentThread();
 
         if (callback != null) {
             callback.onAuthPrompt(userCode, verificationUrl, expiresIn, () -> {
-                SimpleSync.LOGGER.info("[SimpleSync] User requested cancellation of Device Auth prompt");
+                SyncLogger.info("[SimpleSync] User requested cancellation of Device Auth prompt");
                 cancelled.set(true);
                 workerThread.interrupt();
             });
@@ -92,26 +94,26 @@ public class DeviceCodeAuthenticator {
                 throw new AuthCancelledException("Authentication cancelled by user");
             }
 
-            java.util.Map<String, String> params = new java.util.HashMap<>();
+            Map<String, String> params = new HashMap<>();
             params.put("client_id", clientId);
             if (clientSecret != null && !clientSecret.isEmpty()) {
                 params.put("client_secret", clientSecret);
             }
             params.put("device_code", deviceCode);
             params.put("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
-            String tokenBody = dev.simplesync.util.RetryUtil.formEncode(params);
+            String tokenBody = RetryUtil.formEncode(params);
 
             HttpResponse<String> tokenResponse;
             try {
-                tokenResponse = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, TOKEN_URL, tokenBody);
+                tokenResponse = RetryUtil.postFormWithRetry(httpClient, TOKEN_URL, tokenBody);
             } catch (IOException e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
+                SyncLogger.warn("[SimpleSync] Transient network error during authentication polling: {}", e.getMessage());
                 continue;
             }
             JsonObject responseBody = JsonParser.parseString(tokenResponse.body()).getAsJsonObject();
 
             if (tokenResponse.statusCode() == 200 && responseBody.has("access_token")) {
-                SimpleSync.LOGGER.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
+                SyncLogger.info("[SimpleSync] Successfully obtained tokens via Device Authorization Grant!");
                 String accessToken = responseBody.get("access_token").getAsString();
                 String refreshToken = responseBody.has("refresh_token") ? responseBody.get("refresh_token").getAsString() : null;
                 long expiresInSeconds = responseBody.has("expires_in") ? responseBody.get("expires_in").getAsLong() : 3600L;
@@ -139,7 +141,7 @@ public class DeviceCodeAuthenticator {
     }
 
     private JsonObject post(String url, String body) throws IOException, InterruptedException {
-        HttpResponse<String> resp = dev.simplesync.util.RetryUtil.postFormWithRetry(httpClient, url, body);
+        HttpResponse<String> resp = RetryUtil.postFormWithRetry(httpClient, url, body);
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("HTTP error from Google API (" + resp.statusCode() + "): " + resp.body());
         }

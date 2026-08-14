@@ -1,19 +1,15 @@
 package dev.simplesync.util;
 
-import dev.simplesync.SimpleSync;
-
 import java.io.File;
 import java.net.URI;
 import java.util.Locale;
 
 /**
- * Utility for robustly opening URLs and local files across different operating systems.
+ * Utility for robustly opening URLs and local files across different operating systems (Windows, Linux, macOS).
  */
 public final class DesktopUtil {
 
-    private DesktopUtil() {
-        // Utility class
-    }
+    private DesktopUtil() {}
 
     @FunctionalInterface
     private interface FallbackAction {
@@ -21,7 +17,7 @@ public final class DesktopUtil {
     }
 
     /**
-     * Opens a URL in the user's default browser if it belongs to an allowed domain.
+     * Opens a URL in the user's default browser if it belongs to an allowed Google domain.
      *
      * @param url String representation of the URL to open
      * @return true if the URL was opened successfully, false otherwise
@@ -30,12 +26,12 @@ public final class DesktopUtil {
         try {
             URI uri = URI.create(url);
             if (!isAllowedGoogleUrl(uri)) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Refused to open unexpected non-Google URL: {}", url);
+                SyncLogger.warn("[SimpleSync] Refused to open unexpected non-Google URL: {}", url);
                 return false;
             }
             return openUriRobust(uri);
         } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Failed to open URL: {}", url, e);
+            SyncLogger.error("[SimpleSync] Failed to open URL: {}", url, e);
             return false;
         }
     }
@@ -90,49 +86,57 @@ public final class DesktopUtil {
     }
 
     private static boolean openTargetRobust(String targetPathOrUrl, FallbackAction minecraftAction, FallbackAction awtAction) {
-        SimpleSync.LOGGER.info("[SimpleSync] Attempting to open target: {}", targetPathOrUrl);
+        SyncLogger.info("[SimpleSync] Attempting to open target: {}", targetPathOrUrl);
         String operatingSystem = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         boolean isLinuxOrUnix = operatingSystem.contains("linux") || operatingSystem.contains("unix");
+        boolean isMac = operatingSystem.contains("mac") || operatingSystem.contains("darwin");
 
         if (isLinuxOrUnix) {
-            if (launchSanitizedLinuxProcess("xdg-open", targetPathOrUrl)) {
-                SimpleSync.LOGGER.info("[SimpleSync] Opened target via xdg-open: {}", targetPathOrUrl);
+            if (launchSanitizedProcess("xdg-open", targetPathOrUrl)) {
+                SyncLogger.info("[SimpleSync] Opened target via xdg-open: {}", targetPathOrUrl);
                 return true;
             }
-            if (launchSanitizedLinuxProcess("gio", "open", targetPathOrUrl)) {
-                SimpleSync.LOGGER.info("[SimpleSync] Opened target via gio open: {}", targetPathOrUrl);
+            if (launchSanitizedProcess("gio", "open", targetPathOrUrl)) {
+                SyncLogger.info("[SimpleSync] Opened target via gio open: {}", targetPathOrUrl);
+                return true;
+            }
+        } else if (isMac) {
+            if (launchSanitizedProcess("open", targetPathOrUrl)) {
+                SyncLogger.info("[SimpleSync] Opened target via open (macOS): {}", targetPathOrUrl);
                 return true;
             }
         }
 
         try {
             if (minecraftAction.attempt()) {
-                SimpleSync.LOGGER.info("[SimpleSync] Opened target via Minecraft Util: {}", targetPathOrUrl);
+                SyncLogger.info("[SimpleSync] Opened target via Minecraft Util: {}", targetPathOrUrl);
                 return true;
             }
         } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Minecraft Util open failed: {}", e.getMessage());
+            SyncLogger.warn("[SimpleSync] Minecraft Util open failed: {}", e.getMessage());
         }
 
         try {
             if (awtAction.attempt()) {
-                SimpleSync.LOGGER.info("[SimpleSync] Opened target via Java AWT Desktop: {}", targetPathOrUrl);
+                SyncLogger.info("[SimpleSync] Opened target via Java AWT Desktop: {}", targetPathOrUrl);
                 return true;
             }
         } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Java AWT Desktop open failed: {}", e.getMessage());
+            SyncLogger.warn("[SimpleSync] Java AWT Desktop open failed: {}", e.getMessage());
         }
 
         return false;
     }
 
-    private static boolean launchSanitizedLinuxProcess(String... command) {
+    private static boolean launchSanitizedProcess(String... command) {
         try {
             ProcessBuilder processBuilder = new ProcessBuilder(command);
             processBuilder.environment().remove("LD_LIBRARY_PATH");
             processBuilder.environment().remove("LD_PRELOAD");
             processBuilder.environment().remove("APPIMAGE");
             processBuilder.environment().remove("APPDIR");
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
             processBuilder.start();
             return true;
         } catch (Exception e) {

@@ -1,10 +1,11 @@
 package dev.simplesync.cloud;
 
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.*;
 import dev.simplesync.util.RetryUtil.RunnableWithException;
+import dev.simplesync.util.SyncLogger;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 public class CloudSyncManager {
 
@@ -44,7 +46,11 @@ public class CloudSyncManager {
             return t;
         });
         this.status = new AtomicReference<>(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownAndAwaitTermination, "SimpleSync-Shutdown"));
+
+        // Do NOT register standalone-spawning shutdown hook when running inside the standalone uploader itself!
+        if (!"true".equals(System.getProperty("simplesync.standalone"))) {
+            Runtime.getRuntime().addShutdownHook(new Thread(this::shutdownAndAwaitTermination, "SimpleSync-Shutdown"));
+        }
     }
 
     public static CloudSyncManager getInstance() {
@@ -59,7 +65,10 @@ public class CloudSyncManager {
     public CloudProvider getProvider() {
         if (provider == null) {
             synchronized (this) {
-                if (provider == null) provider = new GoogleDriveProvider();
+                if (provider == null) {
+                    SyncConfig config = SyncConfig.load();
+                    provider = CloudProviderFactory.create(config.cloudProvider);
+                }
             }
         }
         return provider;
@@ -67,7 +76,7 @@ public class CloudSyncManager {
 
     public ExecutorService getExecutor() { return executor; }
 
-    // ─── Auth (reemplaza ensureAuthenticatedOrThrow) ──────────────────────
+    // ─── Auth ─────────────────────────────────────────────────────────────
 
     /**
      * @return true if authenticated and ready; false if auth was triggered async (caller should return).
@@ -85,7 +94,7 @@ public class CloudSyncManager {
                     List<Runnable> callbacks = new ArrayList<>(pendingAuthCallbacks);
                     pendingAuthCallbacks.clear();
                     for (Runnable cb : callbacks) {
-                        try { cb.run(); } catch (Exception e) { SimpleSync.LOGGER.error("[SimpleSync] Auth callback error", e); }
+                        try { cb.run(); } catch (Exception e) { SyncLogger.error("[SimpleSync] Auth callback error", e); }
                     }
                 } catch (Throwable t) {
                     pendingAuthCallbacks.clear();
@@ -123,7 +132,7 @@ public class CloudSyncManager {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to process '{}', skipping", cw.worldName(), e);
+                    SyncLogger.error("[SimpleSync] Failed to process '{}', skipping", cw.worldName(), e);
                 }
             }
 
@@ -288,7 +297,7 @@ public class CloudSyncManager {
                 config.save();
                 return true;
             } catch (Throwable t) {
-                SimpleSync.LOGGER.error("[SimpleSync] Delete failed: {}", worldName, t);
+                SyncLogger.error("[SimpleSync] Delete failed: {}", worldName, t);
                 setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : "Delete failed");
                 return false;
             }
@@ -325,7 +334,7 @@ public class CloudSyncManager {
         });
     }
 
-    // ─── Extra Files Sync (unificado) ─────────────────────────────────────
+    // ─── Extra Files Sync ─────────────────────────────────────────────────
 
     public enum ExtraSyncType {
         SCHEMATICS("Schematics"),
@@ -344,11 +353,11 @@ public class CloudSyncManager {
 
         if (config.syncSchematics) {
             try { cloud.syncSchematics(gameRoot); }
-            catch (Exception e) { SimpleSync.LOGGER.error("[SimpleSync] Schematics sync failed", e); }
+            catch (Exception e) { SyncLogger.error("[SimpleSync] Schematics sync failed", e); }
         }
         if (config.syncMasaConfigs) {
             try { cloud.syncMasaConfigs(gameRoot); }
-            catch (Exception e) { SimpleSync.LOGGER.error("[SimpleSync] Masa configs sync failed", e); }
+            catch (Exception e) { SyncLogger.error("[SimpleSync] Masa configs sync failed", e); }
         }
     }
 
@@ -356,7 +365,7 @@ public class CloudSyncManager {
         return runAsyncSafely("Extra files sync failed", "Unknown error", this::syncExtraFilesSync);
     }
 
-    /** Unified single-type sync (replaces syncSchematicsSync/Async + syncMasaConfigsSync/Async) */
+    /** Unified single-type sync */
     public CompletableFuture<Void> syncExtraAsync(ExtraSyncType type) {
         return runAsyncSafely(type.label() + " sync failed", "Unknown error", () -> {
             CloudProvider cloud = getProvider();
@@ -455,19 +464,19 @@ public class CloudSyncManager {
             try { task.run(); }
             catch (Throwable t) {
                 if (getStatus() == SyncStatus.AUTHENTICATING) {
-                    SimpleSync.LOGGER.info("[SimpleSync] {} - authentication in progress, keeping AUTHENTICATING status.", errorPrefix);
+                    SyncLogger.info("[SimpleSync] {} - authentication in progress, keeping AUTHENTICATING status.", errorPrefix);
                     return;
                 }
                 Throwable cause = t;
                 while (cause.getCause() != null && cause != cause.getCause()) {
-                    if (cause instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) break;
+                    if (cause instanceof DeviceCodeAuthenticator.AuthCancelledException) break;
                     cause = cause.getCause();
                 }
-                if (cause instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) {
-                    SimpleSync.LOGGER.info("[SimpleSync] Authentication cancelled by user");
+                if (cause instanceof DeviceCodeAuthenticator.AuthCancelledException) {
+                    SyncLogger.info("[SimpleSync] Authentication cancelled by user");
                     clearStatus();
                 } else {
-                    SimpleSync.LOGGER.error("[SimpleSync] {}", errorPrefix, t);
+                    SyncLogger.error("[SimpleSync] {}", errorPrefix, t);
                     setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : defaultMsg);
                 }
             }
@@ -481,12 +490,15 @@ public class CloudSyncManager {
 
             var modContainer = net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("simplesync");
             if (modContainer.isEmpty()) return false;
-            Path jarPath = modContainer.get().getOrigin().getPaths().get(0);
+            String classpath = modContainer.get().getOrigin().getPaths().stream()
+                    .map(p -> p.toAbsolutePath().toString())
+                    .collect(Collectors.joining(File.pathSeparator));
 
             List<String> command = new ArrayList<>();
             command.add(javaBin);
+            command.add("-Dsimplesync.standalone=true");
             command.add("-cp");
-            command.add(jarPath.toAbsolutePath().toString());
+            command.add(classpath);
             command.add("dev.simplesync.cloud.StandaloneUploader");
             command.add("--world");
             command.add(worldName);
@@ -506,10 +518,10 @@ public class CloudSyncManager {
             pb.redirectOutput(ProcessBuilder.Redirect.to(logFile.toFile()));
             pb.redirectError(ProcessBuilder.Redirect.to(logFile.toFile()));
             pb.start();
-            SimpleSync.LOGGER.info("[SimpleSync] Spawned detached background uploader process for: {}", worldName);
+            SyncLogger.info("[SimpleSync] Spawned detached background uploader process for: {}", worldName);
             return true;
         } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Failed to spawn standalone background uploader", e);
+            SyncLogger.error("[SimpleSync] Failed to spawn standalone background uploader", e);
             return false;
         }
     }
@@ -518,13 +530,22 @@ public class CloudSyncManager {
         StatusSnapshot snapshot = getStatusSnapshot();
         SyncStatus status = snapshot.status();
 
-        if (status == SyncStatus.UPLOADING || status == SyncStatus.COMPRESSING || status == SyncStatus.CHECKING) {
+        if (status == SyncStatus.UPLOADING || status == SyncStatus.COMPRESSING) {
             String worldName = snapshot.detail();
+            // In case detail was "WorldName (XX%)", extract the base world name
             if (worldName != null && !worldName.isEmpty()) {
-                Path savesDir = getSavesDirectory();
-                Path worldFolder = savesDir != null ? savesDir.resolve(worldName) : null;
-                Path tempArchive = SyncConfig.getConfigDir().resolve("temp").resolve(worldName + ".tar.zst");
-                spawnStandaloneUploader(worldName, worldFolder, tempArchive);
+                int parenIdx = worldName.indexOf(" (");
+                if (parenIdx > 0) {
+                    worldName = worldName.substring(0, parenIdx);
+                }
+                if (WorldSyncTask.isWorldNameSafe(worldName)) {
+                    Path savesDir = getSavesDirectory();
+                    Path worldFolder = savesDir != null ? savesDir.resolve(worldName) : null;
+                    Path tempArchive = SyncConfig.getConfigDir().resolve("temp").resolve(worldName + ".tar.zst");
+                    if ((worldFolder != null && Files.isDirectory(worldFolder)) || Files.exists(tempArchive)) {
+                        spawnStandaloneUploader(worldName, worldFolder, tempArchive);
+                    }
+                }
             }
         }
 

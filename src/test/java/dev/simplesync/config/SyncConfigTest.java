@@ -17,6 +17,7 @@ public class SyncConfigTest {
 
     @BeforeEach
     void setUp() {
+        SyncConfig.setConfigDir(tempDir);
         SyncConfig.resetInstance();
     }
 
@@ -65,5 +66,53 @@ public class SyncConfigTest {
         assertTrue(config.ignoredCloudWorlds.contains("ArchivedWorld"));
         config.ignoredCloudWorlds.remove("ArchivedWorld");
         assertFalse(config.ignoredCloudWorlds.contains("ArchivedWorld"));
+    }
+
+    @Test
+    void testSaveAndLoadPersistence() {
+        SyncConfig config = SyncConfig.load();
+        config.autoSyncOnStart = false;
+        config.setTracking("SurvivalWorld", new SyncConfig.WorldTrackingInfo(12345L, 67890L, 11223L));
+        config.ignoredCloudWorlds.add("OldWorld");
+        config.save();
+
+        SyncConfig.resetInstance();
+        SyncConfig loaded = SyncConfig.load();
+
+        assertFalse(loaded.autoSyncOnStart);
+        assertEquals(12345L, loaded.getTracking("SurvivalWorld").lastSyncTimestamp());
+        assertEquals(67890L, loaded.getTracking("SurvivalWorld").lastLocalSize());
+        assertTrue(loaded.ignoredCloudWorlds.contains("OldWorld"));
+    }
+
+    @Test
+    void testLegacyMigration() throws IOException {
+        String legacyJson = """
+                {
+                    "autoSyncOnStart": true,
+                    "lastSyncTimestamps": { "LegacyWorld": 99999 },
+                    "lastLocalSizes": { "LegacyWorld": 88888 },
+                    "lastLocalMtimes": { "LegacyWorld": 77777 }
+                }
+                """;
+        Files.writeString(tempDir.resolve("config.json"), legacyJson);
+
+        SyncConfig config = SyncConfig.load();
+        SyncConfig.WorldTrackingInfo migrated = config.getTracking("LegacyWorld");
+
+        assertEquals(99999L, migrated.lastSyncTimestamp());
+        assertEquals(88888L, migrated.lastLocalSize());
+        assertEquals(77777L, migrated.lastLocalMtime());
+    }
+
+    @Test
+    void testCorruptedConfigRecoversAndBacksUp() throws IOException {
+        Path configFile = tempDir.resolve("config.json");
+        Files.writeString(configFile, "{ this is invalid json !!!");
+
+        SyncConfig config = SyncConfig.load();
+        assertNotNull(config);
+        assertTrue(config.autoSyncOnStart);
+        assertTrue(Files.exists(tempDir.resolve("config.json.corrupted")), "Corrupted config must be backed up");
     }
 }

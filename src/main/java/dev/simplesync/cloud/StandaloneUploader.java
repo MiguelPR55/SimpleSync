@@ -3,6 +3,7 @@ package dev.simplesync.cloud;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
+import dev.simplesync.util.SyncLogger;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +16,8 @@ import java.nio.file.Paths;
 public class StandaloneUploader {
 
     public static void main(String[] args) {
+        System.setProperty("simplesync.standalone", "true");
+
         String worldName = null;
         Path worldDir = null;
         Path archivePath = null;
@@ -33,12 +36,12 @@ public class StandaloneUploader {
         }
 
         if (worldName == null || configDir == null) {
-            System.err.println("[SimpleSync-Uploader] Missing required parameters.");
+            SyncLogger.error("[SimpleSync-Uploader] Missing required parameters.");
             System.exit(1);
             return;
         }
 
-        System.out.println("[SimpleSync-Uploader] Starting detached background upload for world: " + worldName);
+        SyncLogger.info("[SimpleSync-Uploader] Starting detached background upload for world: {}", worldName);
         Path targetArchive = archivePath != null ? archivePath : configDir.resolve("temp").resolve(worldName + ".tar.zst");
 
         try {
@@ -47,19 +50,19 @@ public class StandaloneUploader {
 
             // If archive doesn't exist yet, compress the world directory now
             if (!Files.exists(targetArchive) && worldDir != null && Files.isDirectory(worldDir)) {
-                System.out.println("[SimpleSync-Uploader] Compressing world directory: " + worldDir);
+                SyncLogger.info("[SimpleSync-Uploader] Compressing world directory: {}", worldDir);
                 Files.createDirectories(targetArchive.getParent());
                 WorldSyncTask.compressWorld(worldDir, targetArchive);
             }
 
             if (!Files.exists(targetArchive)) {
-                System.err.println("[SimpleSync-Uploader] Archive file not found: " + targetArchive);
+                SyncLogger.error("[SimpleSync-Uploader] Archive file not found: {}", targetArchive);
                 System.exit(1);
                 return;
             }
 
-            GoogleDriveProvider provider = new GoogleDriveProvider();
-            System.out.println("[SimpleSync-Uploader] Uploading archive to Google Drive...");
+            CloudProvider provider = CloudProviderFactory.create(config.cloudProvider);
+            SyncLogger.info("[SimpleSync-Uploader] Uploading archive using {}...", provider.getName());
             WorldMetadata uploaded = provider.upload(worldName, targetArchive);
 
             if (uploaded != null) {
@@ -67,12 +70,11 @@ public class StandaloneUploader {
                 long size = Files.size(targetArchive);
                 config.setTracking(worldName, new SyncConfig.WorldTrackingInfo(newTs, size, newTs));
                 config.save();
-                System.out.println("[SimpleSync-Uploader] Successfully uploaded '" + worldName + "' to Google Drive!");
+                SyncLogger.info("[SimpleSync-Uploader] Successfully uploaded '{}' via {}!", worldName, provider.getName());
             }
             provider.shutdown();
         } catch (Exception e) {
-            System.err.println("[SimpleSync-Uploader] Upload failed: " + e.getMessage());
-            e.printStackTrace();
+            SyncLogger.error("[SimpleSync-Uploader] Upload failed: {}", e.getMessage(), e);
         } finally {
             try {
                 if (targetArchive != null) Files.deleteIfExists(targetArchive);

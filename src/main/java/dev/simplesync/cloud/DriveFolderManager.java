@@ -3,7 +3,6 @@ package dev.simplesync.cloud;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.util.RetryUtil;
 

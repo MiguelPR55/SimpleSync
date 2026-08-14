@@ -2,14 +2,17 @@ package dev.simplesync.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import dev.simplesync.SimpleSync;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSerializer;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Persistent configuration for SimpleSync.
@@ -20,15 +23,16 @@ public class SyncConfig {
     private static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
             .disableHtmlEscaping()
-            .registerTypeHierarchyAdapter(java.util.concurrent.ConcurrentHashMap.class,
-                    (com.google.gson.JsonSerializer<java.util.concurrent.ConcurrentHashMap<?, ?>>) (src, typeOfSrc, context) -> {
-                        com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
+            .registerTypeHierarchyAdapter(ConcurrentHashMap.class,
+                    (JsonSerializer<ConcurrentHashMap<?, ?>>) (src, typeOfSrc, context) -> {
+                        JsonObject obj = new JsonObject();
                         src.entrySet().stream()
-                                .sorted(Map.Entry.comparingByKey(java.util.Comparator.comparing(Object::toString)))
+                                .sorted(Map.Entry.comparingByKey(Comparator.comparing(Object::toString)))
                                 .forEach(e -> obj.add(String.valueOf(e.getKey()), context.serialize(e.getValue())));
                         return obj;
                     })
             .create();
+
     private static final String CONFIG_FILE = "config.json";
     private static final Object FILE_LOCK = new Object();
     private static volatile Path configDir;
@@ -40,9 +44,9 @@ public class SyncConfig {
     public boolean syncSchematics = true;
     public boolean syncMasaConfigs = true;
     public String cloudProvider = "google_drive";
-    public Map<String, WorldTrackingInfo> worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
-    public Map<String, FileTrackingInfo> fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
-    public java.util.Set<String> ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    public Map<String, WorldTrackingInfo> worldTracking = new ConcurrentHashMap<>();
+    public Map<String, FileTrackingInfo> fileTracking = new ConcurrentHashMap<>();
+    public Set<String> ignoredCloudWorlds = Collections.newSetFromMap(new ConcurrentHashMap<>());
     public String simpleSyncFolderId;
     public String worldsFolderId;
     public String schematicsFolderId;
@@ -70,7 +74,7 @@ public class SyncConfig {
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Failed to create config directory", e);
+            SyncLogger.error("[SimpleSync] Failed to create config directory", e);
         }
         return dir;
     }
@@ -94,7 +98,7 @@ public class SyncConfig {
 
             SyncConfig config = tryLoadFile(configFile);
             if (config == null && Files.exists(tempFile)) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Main config failed to load or missing, attempting to recover from temp config file...");
+                SyncLogger.warn("[SimpleSync] Main config failed to load or missing, attempting to recover from temp config file...");
                 config = tryLoadFile(tempFile);
             }
 
@@ -102,7 +106,7 @@ public class SyncConfig {
                 try {
                     Files.deleteIfExists(tempFile);
                 } catch (IOException e) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
+                    SyncLogger.warn("[SimpleSync] Failed to delete leftover temp config file: {}", e.getMessage());
                 }
                 INSTANCE = config;
                 return INSTANCE;
@@ -112,9 +116,9 @@ public class SyncConfig {
                 try {
                     Path corruptFile = getConfigDir().resolve(CONFIG_FILE + ".corrupted");
                     Files.move(configFile, corruptFile, StandardCopyOption.REPLACE_EXISTING);
-                    SimpleSync.LOGGER.error("[SimpleSync] Config file was corrupted and has been backed up to: {}", corruptFile);
+                    SyncLogger.error("[SimpleSync] Config file was corrupted and has been backed up to: {}", corruptFile);
                 } catch (IOException e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to back up corrupted config file", e);
+                    SyncLogger.error("[SimpleSync] Failed to back up corrupted config file", e);
                 }
             }
 
@@ -151,13 +155,13 @@ public class SyncConfig {
             SyncConfig config = GSON.fromJson(json, SyncConfig.class);
             if (config != null) {
                 if (config.worldTracking == null) {
-                    config.worldTracking = new java.util.concurrent.ConcurrentHashMap<>();
+                    config.worldTracking = new ConcurrentHashMap<>();
                 }
                 if (config.fileTracking == null) {
-                    config.fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+                    config.fileTracking = new ConcurrentHashMap<>();
                 }
                 if (config.lastSyncTimestamps != null || config.lastLocalSizes != null || config.lastLocalMtimes != null) {
-                    java.util.Set<String> allWorlds = new java.util.HashSet<>();
+                    Set<String> allWorlds = new HashSet<>();
                     if (config.lastSyncTimestamps != null) allWorlds.addAll(config.lastSyncTimestamps.keySet());
                     if (config.lastLocalSizes != null) allWorlds.addAll(config.lastLocalSizes.keySet());
                     if (config.lastLocalMtimes != null) allWorlds.addAll(config.lastLocalMtimes.keySet());
@@ -172,16 +176,16 @@ public class SyncConfig {
                     config.lastLocalMtimes = null;
                 }
                 if (config.ignoredCloudWorlds == null) {
-                    config.ignoredCloudWorlds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+                    config.ignoredCloudWorlds = Collections.newSetFromMap(new ConcurrentHashMap<>());
                 } else {
-                    java.util.Set<String> ignored = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+                    Set<String> ignored = Collections.newSetFromMap(new ConcurrentHashMap<>());
                     ignored.addAll(config.ignoredCloudWorlds);
                     config.ignoredCloudWorlds = ignored;
                 }
                 return config;
             }
         } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Failed to load config from {}", file, e);
+            SyncLogger.error("[SimpleSync] Failed to load config from {}", file, e);
         }
         return null;
     }
@@ -204,7 +208,7 @@ public class SyncConfig {
                     Files.move(tempFile, configFile, StandardCopyOption.REPLACE_EXISTING);
                 }
             } catch (IOException e) {
-                SimpleSync.LOGGER.error("[SimpleSync] Failed to save config", e);
+                SyncLogger.error("[SimpleSync] Failed to save config", e);
             }
         }
     }
@@ -223,14 +227,14 @@ public class SyncConfig {
 
     public FileTrackingInfo getFileTracking(String relativePath) {
         if (fileTracking == null) {
-            fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+            fileTracking = new ConcurrentHashMap<>();
         }
         return fileTracking.getOrDefault(relativePath, new FileTrackingInfo(0L, 0L, 0L));
     }
 
     public void setFileTracking(String relativePath, FileTrackingInfo info) {
         if (fileTracking == null) {
-            fileTracking = new java.util.concurrent.ConcurrentHashMap<>();
+            fileTracking = new ConcurrentHashMap<>();
         }
         fileTracking.put(relativePath, info);
     }
@@ -240,5 +244,4 @@ public class SyncConfig {
             fileTracking.remove(relativePath);
         }
     }
-
 }

@@ -3,9 +3,9 @@ package dev.simplesync.cloud;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.util.RetryUtil;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -35,6 +35,8 @@ public class DriveTokenManager {
     public static class ClientSecrets {
         public Details installed;
         public Details web;
+        public String client_id;
+        public String client_secret;
 
         public static class Details {
             public String client_id;
@@ -42,14 +44,22 @@ public class DriveTokenManager {
         }
 
         public Details getDetails() {
-            return installed != null ? installed : web;
+            if (installed != null) return installed;
+            if (web != null) return web;
+            if (client_id != null && !client_id.isEmpty()) {
+                Details d = new Details();
+                d.client_id = client_id;
+                d.client_secret = client_secret;
+                return d;
+            }
+            return null;
         }
     }
 
     public synchronized ClientSecrets loadClientSecrets() throws IOException {
         Path clientSecretFile = SyncConfig.getConfigDir().resolve("client_secret.json");
         if (!Files.exists(clientSecretFile)) {
-            SimpleSync.LOGGER.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
+            SyncLogger.warn("[SimpleSync] No client_secret.json found at: {}", clientSecretFile);
             cachedSecrets = null;
             lastSecretsMtime = -1;
             return null;
@@ -84,7 +94,7 @@ public class DriveTokenManager {
             if (tokenData.refreshToken == null || tokenData.refreshToken.isEmpty()) {
                 throw new IOException("Access token expired and no refresh token available. Re-authenticate.");
             }
-            SimpleSync.LOGGER.info("[SimpleSync] Access token expiring. Refreshing...");
+            SyncLogger.info("[SimpleSync] Access token expiring. Refreshing...");
             tokenData = refreshToken(tokenData);
         }
 
@@ -113,7 +123,7 @@ public class DriveTokenManager {
             if (response.statusCode() != 200) {
                 if (response.statusCode() == 400 || (response.body() != null && response.body().contains("invalid_grant"))) {
                     try { TokenStore.clear(); } catch (Exception ignored) {}
-                    SimpleSync.LOGGER.warn("[SimpleSync] Token permanently revoked or invalid_grant. Cleared TokenStore.");
+                    SyncLogger.warn("[SimpleSync] Token permanently revoked or invalid_grant. Cleared TokenStore.");
                 }
                 throw new IOException("Token refresh returned HTTP " + response.statusCode() + ": " + response.body());
             }
@@ -126,7 +136,7 @@ public class DriveTokenManager {
 
             TokenStore.TokenData newToken = new TokenStore.TokenData(newAccess, newRefresh, newExpiresAt);
             TokenStore.save(newToken);
-            SimpleSync.LOGGER.info("[SimpleSync] Access token refreshed.");
+            SyncLogger.info("[SimpleSync] Access token refreshed.");
             return newToken;
         } catch (Exception e) {
             throw new IOException("Failed to refresh access token: " + e.getMessage(), e);

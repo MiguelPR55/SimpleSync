@@ -3,14 +3,16 @@ package dev.simplesync.cloud;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.FolderSyncTask;
 import dev.simplesync.util.RetryUtil;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.net.URI;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
@@ -18,6 +20,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -90,7 +93,7 @@ public class DriveSyncEngine {
                             config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
                         }
                     } catch (IOException e) {
-                        throw new java.io.UncheckedIOException(e);
+                        throw new UncheckedIOException(e);
                     }
                 }, filePool));
             }
@@ -105,7 +108,7 @@ public class DriveSyncEngine {
                             config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
                         }
                     } catch (IOException e) {
-                        throw new java.io.UncheckedIOException(e);
+                        throw new UncheckedIOException(e);
                     }
                 }, filePool));
             }
@@ -115,13 +118,13 @@ public class DriveSyncEngine {
                     Path target = localBaseDir.resolve(local.relativePath()).normalize();
                     if (target.startsWith(localBaseDir.normalize())) {
                         Files.deleteIfExists(target);
-                        SimpleSync.LOGGER.info("[SimpleSync] Deleted local file '{}' (removed from cloud)", local.relativePath());
+                        SyncLogger.info("[SimpleSync] Deleted local file '{}' (removed from cloud)", local.relativePath());
                     }
                     synchronized (config) {
                         config.removeFileTracking(local.relativePath());
                     }
                 } catch (IOException e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to delete local file '{}'", local.relativePath(), e);
+                    SyncLogger.error("[SimpleSync] Failed to delete local file '{}'", local.relativePath(), e);
                 }
             }
 
@@ -129,7 +132,7 @@ public class DriveSyncEngine {
             config.save();
         } catch (CompletionException ce) {
             config.save();
-            if (ce.getCause() instanceof java.io.UncheckedIOException uioe) {
+            if (ce.getCause() instanceof UncheckedIOException uioe) {
                 throw uioe.getCause();
             }
             throw new IOException("Parallel incremental sync failed: " + ce.getMessage(), ce);
@@ -183,7 +186,7 @@ public class DriveSyncEngine {
                 Optional<String> location = initResp.headers().firstValue("Location");
                 if (location.isEmpty()) throw new IOException("No Location header for resumable upload of " + relPath);
 
-                HttpRequest.Builder putReq = HttpRequest.newBuilder(java.net.URI.create(location.get()))
+                HttpRequest.Builder putReq = HttpRequest.newBuilder(URI.create(location.get()))
                         .PUT(HttpRequest.BodyPublishers.ofFile(local.fullPath()))
                         .timeout(Duration.ofMinutes(15))
                         .header("Content-Type", "application/octet-stream");
@@ -270,7 +273,7 @@ public class DriveSyncEngine {
 
         while (!currentLevel.isEmpty()) {
             if (++depth > MAX_DEPTH) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Folder traversal depth exceeded max limit ({}). Stopping level iteration.", MAX_DEPTH);
+                SyncLogger.warn("[SimpleSync] Folder traversal depth exceeded max limit ({}). Stopping level iteration.", MAX_DEPTH);
                 break;
             }
             List<String> nextLevel = new ArrayList<>();
@@ -304,7 +307,7 @@ public class DriveSyncEngine {
                             String id = f.get("id").getAsString();
                             String name = f.get("name").getAsString();
                             String mimeType = f.has("mimeType") ? f.get("mimeType").getAsString() : "";
-                            long mtime = f.has("modifiedTime") ? java.time.Instant.parse(f.get("modifiedTime").getAsString()).toEpochMilli() : System.currentTimeMillis();
+                            long mtime = f.has("modifiedTime") ? Instant.parse(f.get("modifiedTime").getAsString()).toEpochMilli() : System.currentTimeMillis();
                             long size = f.has("size") ? f.get("size").getAsLong() : 0L;
                             String parentId = rootFolderId;
                             if (f.has("parents") && f.getAsJsonArray("parents").size() > 0) {
@@ -357,12 +360,12 @@ public class DriveSyncEngine {
     }
 
     private String buildRelativePath(DriveItem item, Map<String, DriveItem> itemMap, String rootFolderId) {
-        List<String> parts = new ArrayList<>();
+        Deque<String> parts = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
         DriveItem curr = item;
         while (curr != null && !curr.id().equals(rootFolderId)) {
             if (!visited.add(curr.id())) return null;
-            parts.add(0, curr.name());
+            parts.addFirst(curr.name());
             String parentId = curr.parentId();
             if (parentId == null || parentId.equals(rootFolderId)) break;
             curr = itemMap.get(parentId);

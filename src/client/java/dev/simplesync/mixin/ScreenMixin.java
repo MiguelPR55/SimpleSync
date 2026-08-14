@@ -1,6 +1,7 @@
 package dev.simplesync.mixin;
 
 import dev.simplesync.ui.SyncStatusOverlay;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import org.spongepowered.asm.mixin.Mixin;
@@ -16,7 +17,7 @@ public class ScreenMixin {
 
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onExtractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        Minecraft client = Minecraft.getInstance();
         if (client == null || client.level != null) {
             return;
         }

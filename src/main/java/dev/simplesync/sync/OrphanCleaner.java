@@ -1,6 +1,6 @@
 package dev.simplesync.sync;
 
-import dev.simplesync.SimpleSync;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -40,7 +40,7 @@ public final class OrphanCleaner {
                 Path backupDir = savesDir.resolve(worldName + SUFFIX_BACKUP);
                 Path stagingDir = savesDir.resolve(worldName + SUFFIX_STAGING);
 
-                SimpleSync.LOGGER.warn("[SimpleSync] Interrupted sync detected for '{}'", worldName);
+                SyncLogger.warn("[SimpleSync] Interrupted sync detected for '{}'", worldName);
                 try {
                     if (Files.isDirectory(backupDir)) {
                         if (Files.isDirectory(originalWorld)) WorldArchiver.deleteRecursively(originalWorld);
@@ -48,13 +48,13 @@ public final class OrphanCleaner {
                     }
                     if (Files.isDirectory(stagingDir)) WorldArchiver.deleteRecursively(stagingDir);
                 } catch (IOException e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to recover world '{}'", worldName, e);
+                    SyncLogger.error("[SimpleSync] Failed to recover world '{}'", worldName, e);
                 } finally {
                     try { Files.deleteIfExists(entry); } catch (IOException ignored) {}
                 }
             }
         } catch (IOException e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Error during interrupted sync check", e);
+            SyncLogger.error("[SimpleSync] Error during interrupted sync check", e);
         }
     }
 
@@ -65,25 +65,25 @@ public final class OrphanCleaner {
                 String name = entry.getFileName().toString();
 
                 if (name.endsWith(SUFFIX_STAGING)) {
-                    SimpleSync.LOGGER.warn("[SimpleSync] Cleaning orphaned staging: {}", entry);
+                    SyncLogger.warn("[SimpleSync] Cleaning orphaned staging: {}", entry);
                     try { WorldArchiver.deleteRecursively(entry); }
-                    catch (IOException e) { SimpleSync.LOGGER.error("[SimpleSync] Failed to delete staging: {}", entry, e); }
+                    catch (IOException e) { SyncLogger.error("[SimpleSync] Failed to delete staging: {}", entry, e); }
 
                 } else if (name.endsWith(SUFFIX_BACKUP)) {
                     String originalName = name.substring(0, name.length() - SUFFIX_BACKUP.length());
                     Path originalWorld = savesDir.resolve(originalName);
                     if (!Files.exists(originalWorld)) {
-                        SimpleSync.LOGGER.warn("[SimpleSync] Restoring orphaned backup: {} -> {}", entry, originalWorld);
+                        SyncLogger.warn("[SimpleSync] Restoring orphaned backup: {} -> {}", entry, originalWorld);
                         try { Files.move(entry, originalWorld); }
-                        catch (IOException e) { SimpleSync.LOGGER.error("[SimpleSync] Failed to restore backup: {}", entry, e); }
+                        catch (IOException e) { SyncLogger.error("[SimpleSync] Failed to restore backup: {}", entry, e); }
                     } else {
                         try { WorldArchiver.deleteRecursively(entry); }
-                        catch (IOException e) { SimpleSync.LOGGER.error("[SimpleSync] Failed to delete backup: {}", entry, e); }
+                        catch (IOException e) { SyncLogger.error("[SimpleSync] Failed to delete backup: {}", entry, e); }
                     }
                 }
             }
         } catch (IOException e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Error during orphan cleanup", e);
+            SyncLogger.error("[SimpleSync] Error during orphan cleanup", e);
         }
     }
 }

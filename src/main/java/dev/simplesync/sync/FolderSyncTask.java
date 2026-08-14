@@ -1,14 +1,11 @@
 package dev.simplesync.sync;
 
+import dev.simplesync.config.SyncConfig.FileTrackingInfo;
+
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Stream;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.*;
 
 /**
  * Single-responsibility task for planning and executing incremental folder synchronization.
@@ -25,35 +22,49 @@ public class FolderSyncTask {
 
     /**
      * Scans a local directory recursively and returns metadata for all valid files.
+     * Uses walkFileTree to obtain file size and timestamps directly from directory attributes.
      */
     public static List<LocalFileInfo> scanLocalDirectory(Path baseDir) throws IOException {
-        List<LocalFileInfo> result = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<LocalFileInfo> result = new ArrayList<>();
         if (!Files.isDirectory(baseDir)) {
             return result;
         }
 
-        try (Stream<Path> stream = Files.walk(baseDir)) {
-            stream.filter(Files::isRegularFile).forEach(path -> {
-                String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-                if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
-                    return;
+        Files.walkFileTree(baseDir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+                if (Files.isSymbolicLink(path) || !attrs.isRegularFile()) {
+                    return FileVisitResult.CONTINUE;
+                }
+                String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                for (String ext : IGNORED_EXTENSIONS) {
+                    if (fileName.endsWith(ext)) return FileVisitResult.CONTINUE;
                 }
                 String relPath = baseDir.relativize(path).toString().replace('\\', '/');
-                try {
-                    long lastModified = Files.getLastModifiedTime(path).toMillis();
-                    long size = Files.size(path);
-                    result.add(new LocalFileInfo(relPath, path, lastModified, size));
-                } catch (IOException ignored) {}
-            });
-        }
-        return new ArrayList<>(result);
+                result.add(new LocalFileInfo(relPath, path, attrs.lastModifiedTime().toMillis(), attrs.size()));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                if (Files.isSymbolicLink(dir)) return FileVisitResult.SKIP_SUBTREE;
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        return result;
     }
 
     /**
      * Scans specified Masa mod configuration files and folders relative to game root directory.
      */
     public static List<LocalFileInfo> scanMasaConfigFiles(Path gameRootDir) throws IOException {
-        Map<String, LocalFileInfo> resultMap = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<String, LocalFileInfo> resultMap = new HashMap<>();
 
         // Individual JSON files in config/
         List<String> singleConfigFiles = List.of(
@@ -64,16 +75,15 @@ public class FolderSyncTask {
                 "config/malilib.json"
         );
 
-        singleConfigFiles.forEach(relPath -> {
+        for (String relPath : singleConfigFiles) {
             Path file = gameRootDir.resolve(relPath);
-            if (Files.isRegularFile(file)) {
+            if (Files.isRegularFile(file) && !Files.isSymbolicLink(file)) {
                 try {
-                    long mtime = Files.getLastModifiedTime(file).toMillis();
-                    long size = Files.size(file);
-                    resultMap.put(relPath, new LocalFileInfo(relPath, file, mtime, size));
+                    BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
+                    resultMap.put(relPath, new LocalFileInfo(relPath, file, attrs.lastModifiedTime().toMillis(), attrs.size()));
                 } catch (IOException ignored) {}
             }
-        });
+        }
 
         // Config subdirectories
         List<String> configDirs = List.of(
@@ -84,25 +94,37 @@ public class FolderSyncTask {
                 "itemscroller"
         );
 
-        configDirs.forEach(relDirPath -> {
+        for (String relDirPath : configDirs) {
             Path dir = gameRootDir.resolve(relDirPath);
-            if (Files.isDirectory(dir)) {
-                try (Stream<Path> stream = Files.walk(dir)) {
-                    stream.filter(Files::isRegularFile).forEach(path -> {
-                        String fileName = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-                        if (IGNORED_EXTENSIONS.stream().anyMatch(fileName::endsWith)) {
-                            return;
+            if (Files.isDirectory(dir) && !Files.isSymbolicLink(dir)) {
+                Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+                        if (Files.isSymbolicLink(path) || !attrs.isRegularFile()) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                        String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                        for (String ext : IGNORED_EXTENSIONS) {
+                            if (fileName.endsWith(ext)) return FileVisitResult.CONTINUE;
                         }
                         String relPath = gameRootDir.relativize(path).toString().replace('\\', '/');
-                        try {
-                            long mtime = Files.getLastModifiedTime(path).toMillis();
-                            long size = Files.size(path);
-                            resultMap.put(relPath, new LocalFileInfo(relPath, path, mtime, size));
-                        } catch (IOException ignored) {}
-                    });
-                } catch (IOException ignored) {}
+                        resultMap.put(relPath, new LocalFileInfo(relPath, path, attrs.lastModifiedTime().toMillis(), attrs.size()));
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                        if (Files.isSymbolicLink(d)) return FileVisitResult.SKIP_SUBTREE;
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
             }
-        });
+        }
 
         return new ArrayList<>(resultMap.values());
     }
@@ -120,26 +142,26 @@ public class FolderSyncTask {
      * If a local file exists but is untracked (never synced by this instance) and a remote file exists,
      * the remote file is prioritized for download to protect cloud configurations from default overwrites.
      */
-    public static SyncPlan createSyncPlan(List<LocalFileInfo> localFiles, List<RemoteFileInfo> remoteFiles, Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap) {
+    public static SyncPlan createSyncPlan(List<LocalFileInfo> localFiles, List<RemoteFileInfo> remoteFiles, Map<String, FileTrackingInfo> trackingMap) {
         List<LocalFileInfo> toUpload = new ArrayList<>();
         List<RemoteFileInfo> toDownload = new ArrayList<>();
         List<LocalFileInfo> toDeleteLocally = new ArrayList<>();
 
-        Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingSnapshot =
-                trackingMap != null ? Map.copyOf(trackingMap) : Map.of();
+        Map<String, FileTrackingInfo> trackingSnapshot =
+                trackingMap != null ? new HashMap<>(trackingMap) : Map.of();
 
-        Map<String, RemoteFileInfo> remoteMap = new HashMap<>();
+        Map<String, RemoteFileInfo> remoteMap = new HashMap<>(remoteFiles.size());
         for (RemoteFileInfo remote : remoteFiles) {
             remoteMap.put(remote.relativePath(), remote);
         }
 
-        Map<String, LocalFileInfo> localMap = new HashMap<>();
+        Map<String, LocalFileInfo> localMap = new HashMap<>(localFiles.size());
         for (LocalFileInfo local : localFiles) {
             localMap.put(local.relativePath(), local);
             RemoteFileInfo remote = remoteMap.get(local.relativePath());
             if (remote == null) {
                 // File does not exist remotely
-                dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
+                FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
                 long lastSync = tracking != null ? tracking.lastSyncTimestamp() : 0L;
                 if (lastSync > 0L) {
                     // Previously synced to cloud, but now deleted from cloud -> delete locally
@@ -150,7 +172,7 @@ public class FolderSyncTask {
             } else {
                 // File exists both locally and remotely
                 if (trackingMap != null) {
-                    dev.simplesync.config.SyncConfig.FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
+                    FileTrackingInfo tracking = trackingSnapshot.get(local.relativePath());
                     long lastSync = tracking != null ? tracking.lastSyncTimestamp() : 0L;
 
                     if (lastSync == 0L) {

@@ -1,9 +1,12 @@
 package dev.simplesync.cloud;
 
-import dev.simplesync.SimpleSync;
 import dev.simplesync.util.RetryUtil;
+import dev.simplesync.util.SyncLogger;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -54,7 +57,7 @@ public class DriveApiClient {
                 if (code == 401 && !refreshedToken) {
                     refreshedToken = true;
                     closeBodyQuietly(response.body());
-                    SimpleSync.LOGGER.info("[SimpleSync] HTTP 401. Refreshing token...");
+                    SyncLogger.info("[SimpleSync] HTTP 401. Refreshing token...");
                     String newToken = tokenManager.ensureValidAccessToken();
                     requestBuilder.setHeader("Authorization", "Bearer " + newToken);
                     continue;
@@ -86,14 +89,14 @@ public class DriveApiClient {
     // ─── Multipart Body ───────────────────────────────────────────────────
 
     public static byte[] buildMultipartBody(String boundary, String jsonMeta, byte[] fileBytes) {
-        var baos = new java.io.ByteArrayOutputStream();
+        var baos = new ByteArrayOutputStream();
         try {
             baos.write(("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + jsonMeta + "\r\n").getBytes(StandardCharsets.UTF_8));
             baos.write(("--" + boundary + "\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
             baos.write(fileBytes);
             baos.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new java.io.UncheckedIOException(e);
+            throw new UncheckedIOException(e);
         }
         return baos.toByteArray();
     }
@@ -114,14 +117,14 @@ public class DriveApiClient {
 
     private void logErrorBody(int code, Object body) {
         if (body instanceof String s) {
-            SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({}): {}", code, s);
+            SyncLogger.error("[SimpleSync] Non-retriable HTTP error ({}): {}", code, s);
         } else {
-            SimpleSync.LOGGER.error("[SimpleSync] Non-retriable HTTP error ({})", code);
+            SyncLogger.error("[SimpleSync] Non-retriable HTTP error ({})", code);
         }
     }
 
     private static void closeBodyQuietly(Object body) {
-        if (body instanceof java.io.InputStream is) {
+        if (body instanceof InputStream is) {
             try { is.close(); } catch (Exception ignored) {}
         }
     }

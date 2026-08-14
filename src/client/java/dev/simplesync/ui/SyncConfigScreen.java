@@ -1,12 +1,18 @@
 package dev.simplesync.ui;
 
-import dev.simplesync.SimpleSync;
 import dev.simplesync.cloud.CloudSyncManager;
+import dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException;
 import dev.simplesync.config.SyncConfig;
+import dev.simplesync.util.DesktopUtil;
+import dev.simplesync.util.SyncLogger;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 
 import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
@@ -127,7 +133,7 @@ public class SyncConfigScreen extends Screen {
                     authenticated = false;
                     authError = null;
                 } catch (IOException e) {
-                    SimpleSync.LOGGER.error("[SimpleSync] Failed to disconnect provider", e);
+                    SyncLogger.error("[SimpleSync] Failed to disconnect provider", e);
                     authError = e.getMessage();
                 }
                 this.rebuildWidgets();
@@ -144,19 +150,23 @@ public class SyncConfigScreen extends Screen {
         // Cloud Worlds Manager Button
         this.addRenderableWidget(Button.builder(
                 Component.translatable("simplesync.cloud_worlds.button"),
-                button -> this.minecraft.gui.setScreen(new CloudWorldsScreen(this)))
+                button -> {
+                    if (this.minecraft != null && this.minecraft.gui != null) {
+                        this.minecraft.gui.setScreen(new CloudWorldsScreen(this));
+                    }
+                })
                 .bounds(centerX - 100, centerY + 25, 200, 18)
                 .build());
 
         // Manual Sync Buttons (Schematics / Masa Configs)
         this.addRenderableWidget(Button.builder(
-                Component.literal("Sync Schematics"),
+                Component.translatable("simplesync.config.manual_sync_schematics"),
                 button -> CloudSyncManager.getInstance().syncSchematicsAsync())
                 .bounds(centerX - 100, centerY + 45, 98, 18)
                 .build());
 
         this.addRenderableWidget(Button.builder(
-                Component.literal("Sync Configs"),
+                Component.translatable("simplesync.config.manual_sync_configs"),
                 button -> CloudSyncManager.getInstance().syncMasaConfigsAsync())
                 .bounds(centerX + 2, centerY + 45, 98, 18)
                 .build());
@@ -189,7 +199,7 @@ public class SyncConfigScreen extends Screen {
                 CloudSyncManager.getInstance().getProvider().authenticate();
                 onAuthenticationComplete(true, null);
             } catch (Exception e) {
-                SimpleSync.LOGGER.error("[SimpleSync] Google Drive authentication flow failed", e);
+                SyncLogger.error("[SimpleSync] Google Drive authentication flow failed", e);
                 onAuthenticationComplete(false, e);
             }
         }, CloudSyncManager.getInstance().getExecutor());
@@ -202,7 +212,7 @@ public class SyncConfigScreen extends Screen {
             authenticating = false;
             authenticated = success;
             if (!success && e != null) {
-                if (e instanceof dev.simplesync.cloud.DeviceCodeAuthenticator.AuthCancelledException) {
+                if (e instanceof AuthCancelledException) {
                     authError = null;
                 } else {
                     String msg = e.getMessage() != null ? e.getMessage() : "";
@@ -211,7 +221,7 @@ public class SyncConfigScreen extends Screen {
             } else {
                 authError = null;
             }
-            if (this.minecraft.gui.screen() instanceof dev.simplesync.ui.DeviceAuthScreen authScreen) {
+            if (this.minecraft.gui != null && this.minecraft.gui.screen() instanceof DeviceAuthScreen authScreen) {
                 if (success) {
                     authScreen.markAuthSucceeded();
                 }
@@ -233,12 +243,12 @@ public class SyncConfigScreen extends Screen {
 
     private Component getSchematicsText() {
         Component state = Component.translatable(config.syncSchematics ? "options.on" : "options.off");
-        return Component.literal("Schematics: ").append(state);
+        return Component.translatable("simplesync.config.sync_schematics", state);
     }
 
     private Component getMasaConfigsText() {
         Component state = Component.translatable(config.syncMasaConfigs ? "options.on" : "options.off");
-        return Component.literal("Configs Masa: ").append(state);
+        return Component.translatable("simplesync.config.sync_masa_configs", state);
     }
 
     @Override
@@ -291,7 +301,7 @@ public class SyncConfigScreen extends Screen {
         if (authError != null) {
             Component errText = Component.translatable("simplesync.config.auth_failed", authError);
             int currentY = 32;
-            for (net.minecraft.util.FormattedCharSequence line : this.font.split(errText, 300)) {
+            for (FormattedCharSequence line : this.font.split(errText, 300)) {
                 extractor.centeredText(this.font, line, centerX, currentY, 0xFFE57373);
                 currentY += 9;
             }
@@ -299,7 +309,7 @@ public class SyncConfigScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (showingTutorial && event.button() == 0) {
             int centerX = this.width / 2;
             int startY = 38;
@@ -341,19 +351,19 @@ public class SyncConfigScreen extends Screen {
             int step8Width = this.font.width(Component.translatable("simplesync.tutorial.step8"));
             if (event.y() >= (startY + stepGap * 7) - 4 && event.y() <= (startY + stepGap * 7) + 13
                     && event.x() >= centerX - step8Width / 2 && event.x() <= centerX + step8Width / 2) {
-                dev.simplesync.util.DesktopUtil.openFileRobust(dev.simplesync.config.SyncConfig.getConfigDir().toFile());
+                DesktopUtil.openFileRobust(SyncConfig.getConfigDir().toFile());
                 return true;
             }
         }
         return super.mouseClicked(event, doubleClick);
     }
 
-    public static void confirmAndOpenUrl(net.minecraft.client.gui.screens.Screen parent, String url) {
-        net.minecraft.client.Minecraft.getInstance().gui.setScreen(new net.minecraft.client.gui.screens.ConfirmLinkScreen(confirmed -> {
+    public static void confirmAndOpenUrl(Screen parent, String url) {
+        Minecraft.getInstance().gui.setScreen(new ConfirmLinkScreen(confirmed -> {
             if (confirmed) {
-                dev.simplesync.util.DesktopUtil.openUrl(url);
+                DesktopUtil.openUrl(url);
             }
-            net.minecraft.client.Minecraft.getInstance().gui.setScreen(parent);
+            Minecraft.getInstance().gui.setScreen(parent);
         }, url, true));
     }
 

@@ -1,6 +1,5 @@
 package dev.simplesync.sync;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -8,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,6 +29,21 @@ public class FolderSyncTaskTest {
 
         assertEquals(1, scanned.size());
         assertEquals("build.litematic", scanned.get(0).relativePath());
+    }
+
+    @Test
+    public void testScanLocalDirectoryDeepHierarchy() throws IOException {
+        Path schematicsDir = tempDir.resolve("schematics");
+        Path subDir = schematicsDir.resolve("farms").resolve("iron");
+        Files.createDirectories(subDir);
+
+        Files.writeString(subDir.resolve("iron_farm_v2.litematic"), "iron farm data");
+
+        List<FolderSyncTask.LocalFileInfo> scanned = FolderSyncTask.scanLocalDirectory(schematicsDir);
+
+        assertEquals(1, scanned.size());
+        assertEquals("farms/iron/iron_farm_v2.litematic", scanned.get(0).relativePath());
+        assertEquals(14, scanned.get(0).size());
     }
 
     @Test
@@ -84,12 +99,29 @@ public class FolderSyncTaskTest {
 
         // Without tracking history (untracked), remote should be downloaded instead of being overwritten
         dev.simplesync.config.SyncConfig.FileTrackingInfo untracked = new dev.simplesync.config.SyncConfig.FileTrackingInfo(0L, 0L, 0L);
-        java.util.Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap = java.util.Map.of("config/litematica.json", untracked);
+        Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap = Map.of("config/litematica.json", untracked);
 
         FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(locals, remotes, trackingMap);
 
         assertEquals(0, plan.toUpload().size());
         assertEquals(1, plan.toDownload().size());
         assertTrue(plan.toDownload().contains(remoteCloudConfig));
+    }
+
+    @Test
+    public void testCreateSyncPlanDeletesLocallyWhenPreviouslySyncedFileDeletedFromCloud() {
+        FolderSyncTask.LocalFileInfo localFile = new FolderSyncTask.LocalFileInfo("old_schematic.litematic", tempDir.resolve("old_schematic.litematic"), 5000L, 100L);
+        List<FolderSyncTask.LocalFileInfo> locals = List.of(localFile);
+        List<FolderSyncTask.RemoteFileInfo> remotes = List.of(); // Deleted from cloud
+
+        dev.simplesync.config.SyncConfig.FileTrackingInfo tracked = new dev.simplesync.config.SyncConfig.FileTrackingInfo(5000L, 100L, 5000L);
+        Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap = Map.of("old_schematic.litematic", tracked);
+
+        FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(locals, remotes, trackingMap);
+
+        assertEquals(0, plan.toUpload().size());
+        assertEquals(0, plan.toDownload().size());
+        assertEquals(1, plan.toDeleteLocally().size());
+        assertEquals("old_schematic.litematic", plan.toDeleteLocally().get(0).relativePath());
     }
 }

@@ -1,10 +1,12 @@
 package dev.simplesync.ui;
 
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
+
 import java.util.function.BiConsumer;
 
 /**
@@ -35,13 +37,13 @@ public class DeleteWorldConfirmScreen extends ConfirmScreen {
 
     @Override
     protected void addButtons(LinearLayout layout) {
-        this.yesButton = net.minecraft.client.gui.components.Button.builder(
+        this.yesButton = Button.builder(
                 this.yesButtonComponent,
                 btn -> this.actionCallback.accept(true, this.isDeleteFromDriveSelected())
         ).build();
         layout.addChild(this.yesButton);
 
-        this.noButton = net.minecraft.client.gui.components.Button.builder(
+        this.noButton = Button.builder(
                 this.noButtonComponent,
                 btn -> this.actionCallback.accept(false, this.isDeleteFromDriveSelected())
         ).build();

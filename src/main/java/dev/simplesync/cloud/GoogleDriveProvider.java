@@ -3,16 +3,20 @@ package dev.simplesync.cloud;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.simplesync.SimpleSync;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.sync.WorldSyncTask;
 import dev.simplesync.util.RetryUtil;
+import dev.simplesync.util.SyncLogger;
 
 import java.io.*;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -20,7 +24,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Flow.Subscriber;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Google Drive implementation of CloudProvider.
@@ -74,7 +81,7 @@ public class GoogleDriveProvider implements CloudProvider {
             TokenStore.TokenData tokens = TokenStore.load();
             return tokens != null && tokens.refreshToken != null && !tokens.refreshToken.isEmpty();
         } catch (Exception e) {
-            SimpleSync.LOGGER.error("[SimpleSync] Error checking auth status", e);
+            SyncLogger.error("[SimpleSync] Error checking auth status", e);
             return false;
         }
     }
@@ -98,7 +105,7 @@ public class GoogleDriveProvider implements CloudProvider {
                     "https://www.googleapis.com/auth/drive.file",
                     CloudSyncManager.getInstance().getAuthPromptCallback());
             folders.getSimpleSyncFolderId();
-            SimpleSync.LOGGER.info("[SimpleSync] Authenticated with Google Drive");
+            SyncLogger.info("[SimpleSync] Authenticated with Google Drive");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Auth interrupted", e);
@@ -191,7 +198,7 @@ public class GoogleDriveProvider implements CloudProvider {
             try {
                 moveFileToFolder(fileId, rootId, worldsFolderId);
             } catch (Exception e) {
-                SimpleSync.LOGGER.warn("[SimpleSync] Failed to auto-migrate file {} to Worlds folder", fileId, e);
+                SyncLogger.warn("[SimpleSync] Failed to auto-migrate file {} to Worlds folder", fileId, e);
             }
         }
 
@@ -231,7 +238,7 @@ public class GoogleDriveProvider implements CloudProvider {
             throw new IOException("Refusing to clear symlinked credentials directory");
         }
         TokenStore.clear();
-        SimpleSync.LOGGER.info("[SimpleSync] Disconnected from Google Drive");
+        SyncLogger.info("[SimpleSync] Disconnected from Google Drive");
     }
 
     @Override
@@ -331,7 +338,7 @@ public class GoogleDriveProvider implements CloudProvider {
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
                 if (offset > 0 || attempt > 1) {
-                    HttpRequest statusReq = HttpRequest.newBuilder(java.net.URI.create(sessionUrl))
+                    HttpRequest statusReq = HttpRequest.newBuilder(URI.create(sessionUrl))
                             .PUT(HttpRequest.BodyPublishers.noBody())
                             .header("Content-Range", "bytes */" + fileSize)
                             .timeout(Duration.ofSeconds(30)).build();
@@ -348,29 +355,18 @@ public class GoogleDriveProvider implements CloudProvider {
 
                 final long curOffset = offset;
                 final long remaining = fileSize - curOffset;
-                final java.util.concurrent.atomic.AtomicReference<InputStream> openStream = new java.util.concurrent.atomic.AtomicReference<>();
-                java.util.function.Supplier<InputStream> supplier = () -> {
+                final AtomicReference<InputStream> openStream = new AtomicReference<>();
+                Supplier<InputStream> supplier = () -> {
                     InputStream prev = openStream.get();
                     if (prev != null) {
                         try { prev.close(); } catch (IOException ignored) {}
                     }
                     try {
-                        InputStream fis = Files.newInputStream(file);
+                        FileChannel channel = FileChannel.open(file, StandardOpenOption.READ);
                         if (curOffset > 0) {
-                            long remainingToSkip = curOffset;
-                            while (remainingToSkip > 0) {
-                                long skipped = fis.skip(remainingToSkip);
-                                if (skipped <= 0) {
-                                    if (fis.read() == -1) {
-                                        fis.close();
-                                        throw new IOException("Unexpected EOF while seeking to offset " + curOffset);
-                                    }
-                                    remainingToSkip--;
-                                } else {
-                                    remainingToSkip -= skipped;
-                                }
-                            }
+                            channel.position(curOffset);
                         }
+                        InputStream fis = Channels.newInputStream(channel);
                         ProgressInputStream pis = new ProgressInputStream(fis, fileSize, worldName, true, curOffset);
                         openStream.set(pis);
                         return pis;
@@ -380,10 +376,10 @@ public class GoogleDriveProvider implements CloudProvider {
                 var delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
                 HttpRequest.BodyPublisher bodyPub = new HttpRequest.BodyPublisher() {
                     @Override public long contentLength() { return remaining; }
-                    @Override public void subscribe(java.util.concurrent.Flow.Subscriber<? super java.nio.ByteBuffer> s) { delegate.subscribe(s); }
+                    @Override public void subscribe(Subscriber<? super ByteBuffer> s) { delegate.subscribe(s); }
                 };
 
-                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(java.net.URI.create(sessionUrl))
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(sessionUrl))
                         .PUT(bodyPub).timeout(Duration.ofMinutes(15));
                 if (curOffset > 0) {
                     reqBuilder.header("Content-Range", "bytes " + curOffset + "-" + (fileSize - 1) + "/" + fileSize);
@@ -516,7 +512,7 @@ public class GoogleDriveProvider implements CloudProvider {
                     .method("PATCH", HttpRequest.BodyPublishers.noBody());
             api.send(req, 2);
         } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Failed to migrate file {}: {}", fileId, e.getMessage());
+            SyncLogger.warn("[SimpleSync] Failed to migrate file {}: {}", fileId, e.getMessage());
         }
     }
 
@@ -529,7 +525,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 folders.removeCachedFileId(oldName);
             }
         } catch (Exception e) {
-            SimpleSync.LOGGER.warn("[SimpleSync] Could not clean obsolete archive: {}", e.getMessage());
+            SyncLogger.warn("[SimpleSync] Could not clean obsolete archive: {}", e.getMessage());
         }
     }
 

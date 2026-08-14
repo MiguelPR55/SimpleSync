@@ -24,6 +24,10 @@
   "simplesync.config.title": "SimpleSync Configuration",
   "simplesync.config.auto_start": "Auto Sync on Start: %s",
   "simplesync.config.auto_exit": "Auto Sync on Exit: %s",
+  "simplesync.config.sync_schematics": "Schematics: %s",
+  "simplesync.config.sync_masa_configs": "Masa Configs: %s",
+  "simplesync.config.manual_sync_schematics": "Sync Schematics",
+  "simplesync.config.manual_sync_configs": "Sync Configs",
   "simplesync.config.status": "Google Drive Status: %s",
   "simplesync.config.status.connected": "Connected",
   "simplesync.config.status.disconnected": "Disconnected / Ready to Connect",
@@ -61,5 +65,6 @@
   "simplesync.cloud_worlds.status.installed": "[Installed]",
   "simplesync.cloud_worlds.status.archived": "[Archived / Uninstalled]",
   "simplesync.cloud_worlds.status.cloud_only": "[Cloud Only]",
-  "simplesync.cloud_worlds.error": "Error: %s"
+  "simplesync.cloud_worlds.error": "Error: %s",
+  "simplesync.cloud_worlds.refresh": "Refresh List"
 }

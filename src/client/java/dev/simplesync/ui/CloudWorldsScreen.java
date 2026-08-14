@@ -1,11 +1,10 @@
 package dev.simplesync.ui;
 
-import dev.simplesync.SimpleSync;
 import dev.simplesync.cloud.CloudProvider;
 import dev.simplesync.cloud.CloudSyncManager;
-import dev.simplesync.sync.WorldMetadata;
 import dev.simplesync.config.SyncConfig;
-import net.minecraft.client.Minecraft;
+import dev.simplesync.sync.WorldMetadata;
+import dev.simplesync.util.SyncLogger;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.ConfirmScreen;
@@ -15,17 +14,24 @@ import net.minecraft.network.chat.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * GUI Screen allowing users to view all backed up worlds on Google Drive,
- * restore/download them to local storage, or delete them from the cloud.
+ * Screen that lists all world backups stored in Google Drive.
+ * Allows the user to restore / download older or deleted worlds, or delete cloud backups.
  */
 public class CloudWorldsScreen extends Screen {
+
+    private static final int ITEMS_PER_PAGE = 5;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+            .withZone(ZoneId.systemDefault());
 
     private final Screen parent;
     private List<WorldMetadata> cloudWorlds = new ArrayList<>();
@@ -33,9 +39,7 @@ public class CloudWorldsScreen extends Screen {
     private boolean refreshInFlight = false;
     private String errorMessage = null;
     private int currentPage = 0;
-    private static final int ITEMS_PER_PAGE = 5;
-
-    private final java.util.Map<String, Boolean> installedCache = new java.util.HashMap<>();
+    private final Map<String, Boolean> installedCache = new ConcurrentHashMap<>();
     private long lastCacheRefresh = 0;
 
     public CloudWorldsScreen(Screen parent) {
@@ -58,7 +62,21 @@ public class CloudWorldsScreen extends Screen {
             returnToParent();
         }).bounds(this.width / 2 - 100, bottomY, 200, 20).build());
 
+        if (this.errorMessage != null || (this.cloudWorlds.isEmpty() && !this.loading)) {
+            // Refresh / Retry button centered when empty or on error
+            this.addRenderableWidget(Button.builder(
+                    Component.translatable("simplesync.cloud_worlds.refresh"),
+                    btn -> refreshList()
+            ).bounds(this.width / 2 - 80, this.height / 2 + 10, 160, 20).build());
+        }
+
         if (!this.loading && this.errorMessage == null && !this.cloudWorlds.isEmpty()) {
+            // Refresh button in top corner
+            this.addRenderableWidget(Button.builder(
+                    Component.translatable("simplesync.cloud_worlds.refresh"),
+                    btn -> refreshList()
+            ).bounds(this.width - 100, 10, 90, 18).build());
+
             int totalPages = (this.cloudWorlds.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
             if (totalPages > 1) {
                 // Prev Page Button
@@ -142,6 +160,8 @@ public class CloudWorldsScreen extends Screen {
         this.refreshInFlight = true;
         this.loading = true;
         this.errorMessage = null;
+        this.rebuildWidgets();
+
         CompletableFuture.runAsync(() -> {
             try {
                 CloudProvider cloud = CloudSyncManager.getInstance().getProvider();
@@ -166,7 +186,7 @@ public class CloudWorldsScreen extends Screen {
     }
 
     private void handleError(Exception e) {
-        SimpleSync.LOGGER.error("[SimpleSync] Failed to fetch cloud worlds list", e);
+        SyncLogger.error("[SimpleSync] Failed to fetch cloud worlds list", e);
         if (this.minecraft != null) {
             this.minecraft.execute(() -> {
                 this.errorMessage = e.getMessage() != null ? e.getMessage() : "Error connecting to Google Drive";
@@ -203,7 +223,6 @@ public class CloudWorldsScreen extends Screen {
         int endIdx = Math.min(this.cloudWorlds.size(), startIdx + ITEMS_PER_PAGE);
         Path savesDir = CloudSyncManager.getInstance().getSavesDirectory();
         SyncConfig config = SyncConfig.load();
-        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy HH:mm");
 
         long now = System.currentTimeMillis();
         if (now - lastCacheRefresh > 2000) {
@@ -223,7 +242,7 @@ public class CloudWorldsScreen extends Screen {
             extractor.text(this.font, meta.worldName(), 20, rowY + 2, 0xFFFFFFFF);
 
             // Draw status / date
-            String dateStr = meta.lastModified() > 0 ? sdf.format(new Date(meta.lastModified())) : "";
+            String dateStr = meta.lastModified() > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(meta.lastModified())) : "";
             Component statusComp;
             int statusColor;
             if (isInstalled) {
@@ -255,7 +274,7 @@ public class CloudWorldsScreen extends Screen {
     }
 
     private void returnToParent() {
-        if (this.parent instanceof dev.simplesync.ui.ReloadableScreen reloadable) {
+        if (this.parent instanceof ReloadableScreen reloadable) {
             reloadable.reloadAndReturn();
         } else if (this.minecraft != null && this.minecraft.gui != null) {
             this.minecraft.gui.setScreen(this.parent);

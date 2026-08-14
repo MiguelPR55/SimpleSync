@@ -4,6 +4,7 @@ import dev.simplesync.cloud.CloudSyncManager;
 import dev.simplesync.config.SyncConfig;
 import dev.simplesync.sync.SyncStatus;
 import dev.simplesync.ui.DeleteWorldConfirmScreen;
+import dev.simplesync.util.SyncLogger;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ProgressScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldSelectionList;
@@ -32,7 +33,7 @@ public abstract class WorldListEntryMixin {
     private void onJoinWorld(CallbackInfo ci) {
         SyncStatus status = CloudSyncManager.getInstance().getStatus();
         if (status.isBusy()) {
-            dev.simplesync.SimpleSync.LOGGER.warn("[SimpleSync] Prevented joining world because cloud sync is active: {}", status);
+            SyncLogger.warn("[SimpleSync] Prevented joining world because cloud sync is active: {}", status);
             ci.cancel();
         }
     }
@@ -41,7 +42,7 @@ public abstract class WorldListEntryMixin {
     private void onDeleteWorld(CallbackInfo ci) {
         SyncStatus status = CloudSyncManager.getInstance().getStatus();
         if (status.isBusy()) {
-            dev.simplesync.SimpleSync.LOGGER.warn("[SimpleSync] Prevented deleting world because cloud sync is active: {}", status);
+            SyncLogger.warn("[SimpleSync] Prevented deleting world because cloud sync is active: {}", status);
             ci.cancel();
             return;
         }
@@ -55,12 +56,12 @@ public abstract class WorldListEntryMixin {
                         this.doDeleteWorld();
 
                         if (deleteFromDrive) {
-                            CloudSyncManager.getInstance().deleteWorldFromCloudAsync(worldName);
+                            CloudSyncManager.getInstance().deleteWorldFromCloudAsync(worldId);
                         } else {
                             SyncConfig config = SyncConfig.load();
-                            config.removeTracking(worldName);
+                            config.removeTracking(worldId);
                             if (config.ignoredCloudWorlds != null) {
-                                config.ignoredCloudWorlds.add(worldName);
+                                config.ignoredCloudWorlds.add(worldId);
                             }
                             config.save();
                         }
