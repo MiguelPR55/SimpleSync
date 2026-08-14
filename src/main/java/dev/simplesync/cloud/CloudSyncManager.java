@@ -687,7 +687,18 @@ public class CloudSyncManager {
 
     public boolean spawnStandaloneUploader(String worldName, Path worldFolder, Path archivePath) {
         try {
-            String javaBin = ProcessHandle.current().info().command().orElse("java");
+            String javaBin = ProcessHandle.current().info().command()
+                    .filter(cmd -> !cmd.isBlank())
+                    .orElseGet(() -> {
+                        String javaHome = System.getProperty("java.home");
+                        if (javaHome != null && !javaHome.isBlank()) {
+                            Path binJava = Path.of(javaHome, "bin", System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win") ? "java.exe" : "java");
+                            if (Files.isExecutable(binJava)) {
+                                return binJava.toAbsolutePath().toString();
+                            }
+                        }
+                        return "java";
+                    });
             Path configDir = SyncConfig.getConfigDir();
 
             var modContainer = net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("simplesync");

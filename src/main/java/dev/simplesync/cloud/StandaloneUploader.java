@@ -44,6 +44,7 @@ public class StandaloneUploader {
         SyncLogger.info("[SimpleSync-Uploader] Starting detached background upload for world: {}", worldName);
         Path targetArchive = archivePath != null ? archivePath : configDir.resolve("temp").resolve(worldName + ".tar.zst");
 
+        CloudProvider provider = null;
         try {
             SyncConfig.setConfigDir(configDir);
             SyncConfig config = SyncConfig.load();
@@ -61,7 +62,7 @@ public class StandaloneUploader {
                 return;
             }
 
-            CloudProvider provider = CloudProviderFactory.create(config.cloudProvider);
+            provider = CloudProviderFactory.create(config.cloudProvider);
             SyncLogger.info("[SimpleSync-Uploader] Uploading archive using {}...", provider.getName());
             WorldMetadata uploaded = provider.upload(worldName, targetArchive);
 
@@ -72,10 +73,12 @@ public class StandaloneUploader {
                 config.save();
                 SyncLogger.info("[SimpleSync-Uploader] Successfully uploaded '{}' via {}!", worldName, provider.getName());
             }
-            provider.shutdown();
         } catch (Exception e) {
             SyncLogger.error("[SimpleSync-Uploader] Upload failed: {}", e.getMessage(), e);
         } finally {
+            if (provider != null) {
+                try { provider.shutdown(); } catch (Exception ignored) {}
+            }
             try {
                 if (targetArchive != null) Files.deleteIfExists(targetArchive);
             } catch (Exception ignored) {}
