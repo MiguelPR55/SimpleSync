@@ -22,6 +22,7 @@ public class StandaloneUploader {
         Path worldDir = null;
         Path archivePath = null;
         Path configDir = null;
+        Path gameDir = null;
 
         for (int i = 0; i < args.length; i++) {
             if ("--world".equals(args[i]) && i + 1 < args.length) {
@@ -32,6 +33,8 @@ public class StandaloneUploader {
                 archivePath = Paths.get(args[++i]);
             } else if ("--config".equals(args[i]) && i + 1 < args.length) {
                 configDir = Paths.get(args[++i]);
+            } else if ("--gameDir".equals(args[i]) && i + 1 < args.length) {
+                gameDir = Paths.get(args[++i]);
             }
         }
 
@@ -72,6 +75,26 @@ public class StandaloneUploader {
                 config.setTracking(worldName, new SyncConfig.WorldTrackingInfo(newTs, size, newTs));
                 config.save();
                 SyncLogger.info("[SimpleSync-Uploader] Successfully uploaded '{}' via {}!", worldName, provider.getName());
+            }
+
+            // Sync schematics and Masa configs if enabled
+            if (gameDir != null && Files.isDirectory(gameDir)) {
+                if (config.syncSchematics) {
+                    try {
+                        SyncLogger.info("[SimpleSync-Uploader] Syncing schematics in detached process...");
+                        provider.syncSchematics(gameDir);
+                    } catch (Exception e) {
+                        SyncLogger.error("[SimpleSync-Uploader] Detached schematics sync failed", e);
+                    }
+                }
+                if (config.syncMasaConfigs) {
+                    try {
+                        SyncLogger.info("[SimpleSync-Uploader] Syncing Masa configs in detached process...");
+                        provider.syncMasaConfigs(gameDir);
+                    } catch (Exception e) {
+                        SyncLogger.error("[SimpleSync-Uploader] Detached Masa configs sync failed", e);
+                    }
+                }
             }
         } catch (Exception e) {
             SyncLogger.error("[SimpleSync-Uploader] Upload failed: {}", e.getMessage(), e);

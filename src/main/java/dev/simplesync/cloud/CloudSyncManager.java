@@ -758,6 +758,11 @@ public class CloudSyncManager {
             }
             command.add("--config");
             command.add(configDir.toAbsolutePath().toString());
+            Path gameRoot = getGameRootDir();
+            if (gameRoot != null && Files.isDirectory(gameRoot)) {
+                command.add("--gameDir");
+                command.add(gameRoot.toAbsolutePath().toString());
+            }
 
             ProcessBuilder pb = new ProcessBuilder(command);
             Path logFile = configDir.resolve("uploader.log");
