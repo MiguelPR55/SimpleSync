@@ -93,19 +93,12 @@ shadowJar {
     exclude 'META-INF/DEPENDENCIES'
     exclude 'META-INF/maven/**'
 
-    // Exclude native zstd libraries for unused or exotic operating systems and CPU architectures
+    // Exclude all bundled native binaries (downloaded on demand by ZstdNativeLoader to keep mod JAR ~300KB)
+    exclude 'darwin/**'
+    exclude 'linux/**'
+    exclude 'win/**'
     exclude 'aix/**'
     exclude 'freebsd/**'
-    exclude 'linux/i386/**'
-    exclude 'linux/mips64/**'
-    exclude 'linux/ppc64/**'
-    exclude 'linux/ppc64le/**'
-    exclude 'linux/riscv64/**'
-    exclude 'linux/loongarch64/**'
-    exclude 'linux/s390x/**'
-    exclude 'linux/arm/**'
-    exclude 'win/x86/**'
-    exclude 'win/aarch64/**'
 
     // Exclude unused compression formats and archivers from commons-compress
     exclude '**/archivers/zip/**'

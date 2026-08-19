@@ -19,6 +19,7 @@ public class SimpleSync implements ModInitializer {
     @Override
     public void onInitialize() {
         SyncLogger.info("[SimpleSync] Initializing...");
+        dev.simplesync.sync.ZstdNativeLoader.ensureLoaded();
         preloadClasses();
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {

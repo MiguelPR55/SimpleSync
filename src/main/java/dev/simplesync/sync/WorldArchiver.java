@@ -165,6 +165,7 @@ public class WorldArchiver {
                 @Override public void close() throws IOException { zis.close(); }
             };
         } else {
+            ZstdNativeLoader.ensureLoaded();
             ZstdInputStream zis = new ZstdInputStream(fis);
             TarArchiveInputStream tis = new TarArchiveInputStream(zis);
             return new ArchiveEntryReader() {
@@ -223,6 +224,7 @@ public class WorldArchiver {
     }
 
     private static void compressTarZst(Path worldFolder, Path output) throws IOException {
+        ZstdNativeLoader.ensureLoaded();
         if (output.getParent() != null) Files.createDirectories(output.getParent());
         int workers = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
 
