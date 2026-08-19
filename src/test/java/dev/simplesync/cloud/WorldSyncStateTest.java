@@ -110,4 +110,26 @@ public class WorldSyncStateTest {
         assertFalse(manager.getPendingSyncWorlds().contains(world));
         assertTrue(manager.getSynchronizedWorlds().contains(world));
     }
+
+    @Test
+    void testSyncCallbacks() throws IOException {
+        CloudSyncManager manager = CloudSyncManager.getInstance();
+        java.util.concurrent.atomic.AtomicBoolean batchCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicReference<String> worldSynced = new java.util.concurrent.atomic.AtomicReference<>();
+
+        manager.setBatchSyncCompleteCallback(() -> batchCalled.set(true));
+        manager.setWorldSyncedCallback(worldSynced::set);
+
+        manager.markWorldSynchronized("TestWorld1");
+        assertEquals("TestWorld1", worldSynced.get());
+
+        manager.markInitialSyncCompleted();
+        assertTrue(batchCalled.get());
+    }
+
+    @Test
+    void testIsSyncingAll() {
+        CloudSyncManager manager = CloudSyncManager.getInstance();
+        assertFalse(manager.isSyncingAll());
+    }
 }

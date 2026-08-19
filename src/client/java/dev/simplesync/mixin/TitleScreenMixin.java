@@ -22,6 +22,12 @@ public class TitleScreenMixin {
 
     @Inject(method = "init", at = @At("TAIL"))
     private void onInit(CallbackInfo ci) {
+        dev.simplesync.ui.SyncConflictScreen pendingConflict = dev.simplesync.SimpleSyncClient.getPendingConflictScreen();
+        if (pendingConflict != null) {
+            net.minecraft.client.Minecraft.getInstance().gui.setScreen(pendingConflict);
+            return;
+        }
+
         if (SimpleSync.needsTitleScreenSync.compareAndSet(true, false)) {
             SyncConfig config = SyncConfig.load();
             if (config.autoSyncOnStart) {

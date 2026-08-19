@@ -207,8 +207,10 @@ public class LitematicaPathNormalizerTest {
         assertTrue(healed);
 
         String healedContent = Files.readString(placementFile);
+        JsonObject parsed = JsonParser.parseString(healedContent).getAsJsonObject();
+        String fileVal = parsed.getAsJsonArray("placements").get(0).getAsJsonObject().get("file").getAsString();
         Path expectedPath = schematicsDir.resolve("beacon.litematic").toAbsolutePath().normalize();
-        assertTrue(healedContent.contains(expectedPath.toString()));
+        assertEquals(expectedPath.toString(), Path.of(fileVal).toAbsolutePath().normalize().toString());
     }
 
     @Test
