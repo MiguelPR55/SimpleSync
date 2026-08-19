@@ -60,33 +60,32 @@ public class SimpleSync implements ModInitializer {
     }
 
     private static void preloadClasses() {
-        String[] classes = {
-            "dev.simplesync.cloud.TokenStore",
-            "dev.simplesync.cloud.TokenStore$TokenData",
-            "dev.simplesync.cloud.DeviceCodeAuthenticator",
-            "dev.simplesync.cloud.GoogleDriveProvider",
-            "dev.simplesync.cloud.CloudSyncManager",
-            "dev.simplesync.compat.litematica.LitematicaPathNormalizer",
-            "dev.simplesync.compat.litematica.LitematicaIntegration",
-            "dev.simplesync.util.RetryUtil",
-            "dev.simplesync.util.SyncLogger",
-            "dev.simplesync.sync.WorldSyncTask",
-            "dev.simplesync.sync.WorldArchiver",
-            "dev.simplesync.sync.WorldMetadata",
-            "dev.simplesync.sync.StatusSnapshot",
-            "dev.simplesync.sync.SyncStatus",
-            "java.util.concurrent.CompletableFuture",
-            "java.net.http.HttpClient",
-            "java.net.http.HttpRequest",
-            "java.net.http.HttpResponse",
-            "dev.simplesync.shadow.org.apache.commons.compress.archivers.tar.TarArchiveOutputStream",
-            "dev.simplesync.shadow.org.apache.commons.compress.archivers.zip.ZipEncodingHelper",
-            "com.github.luben.zstd.ZstdOutputStream",
-            "com.github.luben.zstd.ZstdInputStream"
+        Class<?>[] classes = {
+            dev.simplesync.cloud.TokenStore.class,
+            dev.simplesync.cloud.DeviceCodeAuthenticator.class,
+            dev.simplesync.cloud.GoogleDriveProvider.class,
+            dev.simplesync.cloud.CloudSyncManager.class,
+            dev.simplesync.compat.litematica.LitematicaPathNormalizer.class,
+            dev.simplesync.compat.litematica.LitematicaIntegration.class,
+            dev.simplesync.util.RetryUtil.class,
+            dev.simplesync.util.SyncLogger.class,
+            dev.simplesync.sync.WorldSyncTask.class,
+            dev.simplesync.sync.WorldArchiver.class,
+            dev.simplesync.sync.WorldMetadata.class,
+            dev.simplesync.sync.StatusSnapshot.class,
+            dev.simplesync.sync.SyncStatus.class,
+            java.util.concurrent.CompletableFuture.class,
+            java.net.http.HttpClient.class,
+            java.net.http.HttpRequest.class,
+            java.net.http.HttpResponse.class,
+            org.apache.commons.compress.archivers.tar.TarArchiveOutputStream.class,
+            com.github.luben.zstd.ZstdOutputStream.class,
+            com.github.luben.zstd.ZstdInputStream.class
         };
-        for (String cls : classes) {
-            try { Class.forName(cls, true, SimpleSync.class.getClassLoader()); }
-            catch (ClassNotFoundException e) { SyncLogger.warn("[SimpleSync] Preload failed: {}", cls); }
+        for (Class<?> cls : classes) {
+            try {
+                Class.forName(cls.getName(), true, SimpleSync.class.getClassLoader());
+            } catch (ClassNotFoundException ignored) {}
         }
     }
 

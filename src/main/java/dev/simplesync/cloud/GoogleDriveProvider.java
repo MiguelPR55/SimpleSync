@@ -262,58 +262,8 @@ public class GoogleDriveProvider implements CloudProvider {
         String mimeType = isZip ? ZIP_MIME : TAR_ZST_MIME;
         long fileSize = Files.size(archiveFile);
 
-        String existingFileId = folders.findFileId(fileName);
-        boolean isUpdate = existingFileId != null;
-
-        String initUrl = isUpdate
-                ? "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=resumable&fields=id,name,modifiedTime,size"
-                : "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
-
-        JsonObject metadata = new JsonObject();
-        metadata.addProperty("name", fileName);
-        if (!isUpdate) {
-            JsonArray parents = new JsonArray();
-            parents.add(folders.getWorldsFolderId());
-            metadata.add("parents", parents);
-        }
-
-        HttpRequest.Builder initReq = api.authedRequest(initUrl, Duration.ofSeconds(30))
-                .method(isUpdate ? "PATCH" : "POST", HttpRequest.BodyPublishers.ofString(metadata.toString()))
-                .header("Content-Type", "application/json; charset=UTF-8")
-                .header("X-Upload-Content-Type", mimeType)
-                .header("X-Upload-Content-Length", String.valueOf(fileSize));
-
-        HttpResponse<String> initResp = api.send(initReq, 3);
-        if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
-            if (isUpdate && initResp.statusCode() == 404) {
-                folders.removeCachedFileId(fileName);
-                // Fall back to creating a new file without recursive calls
-                isUpdate = false;
-                initUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
-                metadata = new JsonObject();
-                metadata.addProperty("name", fileName);
-                JsonArray parents = new JsonArray();
-                parents.add(folders.getWorldsFolderId());
-                metadata.add("parents", parents);
-
-                initReq = api.authedRequest(initUrl, Duration.ofSeconds(30))
-                        .POST(HttpRequest.BodyPublishers.ofString(metadata.toString()))
-                        .header("Content-Type", "application/json; charset=UTF-8")
-                        .header("X-Upload-Content-Type", mimeType)
-                        .header("X-Upload-Content-Length", String.valueOf(fileSize));
-                initResp = api.send(initReq, 3);
-                if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
-                    throw new IOException("Resumable upload init failed after 404 fallback: HTTP " + initResp.statusCode());
-                }
-            } else {
-                throw new IOException("Resumable upload init failed: HTTP " + initResp.statusCode());
-            }
-        }
-
-        Optional<String> location = initResp.headers().firstValue("Location");
-        if (location.isEmpty()) throw new IOException("No Location header in resumable upload response");
-
-        HttpResponse<String> putResp = uploadPut(location.get(), archiveFile, worldName, fileSize);
+        String sessionUrl = initResumableSession(fileName, mimeType, fileSize, folders.findFileId(fileName));
+        HttpResponse<String> putResp = uploadPut(sessionUrl, archiveFile, worldName, fileSize);
         if (putResp.statusCode() != 200 && putResp.statusCode() != 201) {
             throw new IOException("Upload PUT failed: HTTP " + putResp.statusCode());
         }
@@ -330,6 +280,45 @@ public class GoogleDriveProvider implements CloudProvider {
                 : System.currentTimeMillis();
         long size = uploaded.has("size") ? uploaded.get("size").getAsLong() : fileSize;
         return new WorldMetadata(worldName, mtime, size, fileId);
+    }
+
+    private String initResumableSession(String fileName, String mimeType, long fileSize, String existingFileId) throws IOException {
+        String fileId = existingFileId;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            boolean isUpdate = fileId != null;
+            String initUrl = isUpdate
+                    ? "https://www.googleapis.com/upload/drive/v3/files/" + fileId + "?uploadType=resumable&fields=id,name,modifiedTime,size"
+                    : "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
+
+            JsonObject metadata = new JsonObject();
+            metadata.addProperty("name", fileName);
+            if (!isUpdate) {
+                JsonArray parents = new JsonArray();
+                parents.add(folders.getWorldsFolderId());
+                metadata.add("parents", parents);
+            }
+
+            HttpRequest.Builder initReq = api.authedRequest(initUrl, Duration.ofSeconds(30))
+                    .method(isUpdate ? "PATCH" : "POST", HttpRequest.BodyPublishers.ofString(metadata.toString()))
+                    .header("Content-Type", "application/json; charset=UTF-8")
+                    .header("X-Upload-Content-Type", mimeType)
+                    .header("X-Upload-Content-Length", String.valueOf(fileSize));
+
+            HttpResponse<String> initResp = api.send(initReq, 3);
+            if (initResp.statusCode() == 200 || initResp.statusCode() == 201) {
+                return initResp.headers().firstValue("Location")
+                        .orElseThrow(() -> new IOException("No Location header in resumable upload response"));
+            }
+
+            if (isUpdate && initResp.statusCode() == 404) {
+                folders.removeCachedFileId(fileName);
+                fileId = null;
+                continue;
+            }
+
+            throw new IOException("Resumable upload init failed: HTTP " + initResp.statusCode());
+        }
+        throw new IOException("Resumable upload init failed after 404 fallback");
     }
 
     private HttpResponse<String> uploadPut(String sessionUrl, Path file, String worldName, long fileSize)

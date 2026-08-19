@@ -140,18 +140,16 @@ public class SimpleSyncClient implements ClientModInitializer {
     }
 
     private static void preloadClientClasses() {
-        String[] classes = {
-            "dev.simplesync.ui.DeviceAuthScreen",
-            "dev.simplesync.ui.SyncConfigScreen",
-            "dev.simplesync.ui.SyncConflictScreen",
-            "dev.simplesync.ui.SyncStatusOverlay"
+        Class<?>[] classes = {
+            dev.simplesync.ui.DeviceAuthScreen.class,
+            dev.simplesync.ui.SyncConfigScreen.class,
+            dev.simplesync.ui.SyncConflictScreen.class,
+            dev.simplesync.ui.SyncStatusOverlay.class
         };
-        for (String cls : classes) {
+        for (Class<?> cls : classes) {
             try {
-                Class.forName(cls, true, SimpleSyncClient.class.getClassLoader());
-            } catch (ClassNotFoundException e) {
-                SyncLogger.warn("[SimpleSync] Preloading failed for client class: {}", cls);
-            }
+                Class.forName(cls.getName(), true, SimpleSyncClient.class.getClassLoader());
+            } catch (ClassNotFoundException ignored) {}
         }
     }
 }

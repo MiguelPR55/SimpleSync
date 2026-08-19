@@ -351,7 +351,7 @@ public class SyncConfigScreen extends Screen {
             int step8Width = this.font.width(Component.translatable("simplesync.tutorial.step8"));
             if (event.y() >= (startY + stepGap * 7) - 4 && event.y() <= (startY + stepGap * 7) + 13
                     && event.x() >= centerX - step8Width / 2 && event.x() <= centerX + step8Width / 2) {
-                DesktopUtil.openFileRobust(SyncConfig.getConfigDir().toFile());
+                DesktopUtil.openFile(SyncConfig.getConfigDir().toFile());
                 return true;
             }
         }

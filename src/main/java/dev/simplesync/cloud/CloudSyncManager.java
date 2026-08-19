@@ -343,32 +343,35 @@ public class CloudSyncManager {
         if (!worldFolder.startsWith(savesDir.normalize())) return false;
         if (config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(worldName)) return false;
 
+        boolean isLocalDir = Files.isDirectory(worldFolder);
         long localTs = config.getTracking(worldName).lastSyncTimestamp();
         long tolerance = localTs > 0 ? 5000L : 0L;
 
-        if (cw.lastModified() > (localTs + tolerance) || !Files.isDirectory(worldFolder)) {
-            if (!Files.isDirectory(worldFolder) && localTs > 0) {
-                config.removeTracking(worldName);
-                if (config.ignoredCloudWorlds != null) config.ignoredCloudWorlds.add(worldName);
-                config.save();
-                return false;
-            }
+        if (!isLocalDir && localTs > 0) {
+            config.removeTracking(worldName);
+            if (config.ignoredCloudWorlds != null) config.ignoredCloudWorlds.add(worldName);
+            config.save();
+            return false;
+        }
 
-            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
-            if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
+        WorldSyncTask.WorldStats stats = isLocalDir ? WorldSyncTask.getWorldStats(worldFolder) : new WorldSyncTask.WorldStats(0, 0);
+        boolean localModified = isLocalDir && WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats);
+
+        if (cw.lastModified() > (localTs + tolerance) || !isLocalDir) {
+            if (localModified) {
                 boolean useCloud = resolveConflict(worldName, stats, cw.lastModified());
-                if (!useCloud) { uploadWorldSync(worldName, isBatch); return false; }
+                if (!useCloud) {
+                    uploadWorldSync(worldName, isBatch);
+                    return false;
+                }
             }
 
             downloadAndExtract(cloud, worldName, worldFolder, config, cw.lastModified());
             return true;
-        } else {
-            WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
-            if (WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
-                uploadWorldSync(worldName, isBatch);
-            }
-            return false;
+        } else if (localModified) {
+            uploadWorldSync(worldName, isBatch);
         }
+        return false;
     }
 
     // ─── Conflict Resolution ──────────────────────────────────────────────
@@ -624,18 +627,16 @@ public class CloudSyncManager {
     }
 
     public void syncSchematicsSync() throws IOException {
-        try {
-            syncExtraAsync(ExtraSyncType.SCHEMATICS).join();
-        } catch (CompletionException ce) {
-            if (ce.getCause() instanceof IOException ioe) throw ioe;
-            if (ce.getCause() instanceof RuntimeException re) throw re;
-            throw new IOException(ce.getCause() != null ? ce.getCause() : ce);
-        }
+        joinUnwrapped(syncExtraAsync(ExtraSyncType.SCHEMATICS));
     }
 
     public void syncMasaConfigsSync() throws IOException {
+        joinUnwrapped(syncExtraAsync(ExtraSyncType.MASA_CONFIGS));
+    }
+
+    private static void joinUnwrapped(CompletableFuture<Void> future) throws IOException {
         try {
-            syncExtraAsync(ExtraSyncType.MASA_CONFIGS).join();
+            future.join();
         } catch (CompletionException ce) {
             if (ce.getCause() instanceof IOException ioe) throw ioe;
             if (ce.getCause() instanceof RuntimeException re) throw re;

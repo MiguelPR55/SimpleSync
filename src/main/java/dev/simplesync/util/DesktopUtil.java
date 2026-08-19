@@ -100,13 +100,7 @@ public final class DesktopUtil {
         return false;
     }
 
-    public static boolean openFileRobust(File file) {
-        return openFile(file);
-    }
 
-    public static boolean openUriRobust(URI uri) {
-        return openUri(uri);
-    }
 
     // ─── Linux / Flatpak Helpers ──────────────────────────────────────────
 

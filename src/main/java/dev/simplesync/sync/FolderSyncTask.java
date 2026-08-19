@@ -26,37 +26,7 @@ public class FolderSyncTask {
      */
     public static List<LocalFileInfo> scanLocalDirectory(Path baseDir) throws IOException {
         List<LocalFileInfo> result = new ArrayList<>();
-        if (!Files.isDirectory(baseDir)) {
-            return result;
-        }
-
-        Files.walkFileTree(baseDir, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
-                if (Files.isSymbolicLink(path) || !attrs.isRegularFile()) {
-                    return FileVisitResult.CONTINUE;
-                }
-                String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                for (String ext : IGNORED_EXTENSIONS) {
-                    if (fileName.endsWith(ext)) return FileVisitResult.CONTINUE;
-                }
-                String relPath = baseDir.relativize(path).toString().replace('\\', '/');
-                result.add(new LocalFileInfo(relPath, path, attrs.lastModifiedTime().toMillis(), attrs.size()));
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                if (Files.isSymbolicLink(dir)) return FileVisitResult.SKIP_SUBTREE;
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                return FileVisitResult.CONTINUE;
-            }
-        });
-
+        scanDirectoryInternal(baseDir, baseDir, result);
         return result;
     }
 
@@ -64,7 +34,7 @@ public class FolderSyncTask {
      * Scans specified Masa mod configuration files and folders relative to game root directory.
      */
     public static List<LocalFileInfo> scanMasaConfigFiles(Path gameRootDir) throws IOException {
-        Map<String, LocalFileInfo> resultMap = new HashMap<>();
+        List<LocalFileInfo> result = new ArrayList<>();
 
         // Individual JSON files in config/
         List<String> singleConfigFiles = List.of(
@@ -80,7 +50,7 @@ public class FolderSyncTask {
             if (Files.isRegularFile(file) && !Files.isSymbolicLink(file)) {
                 try {
                     BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
-                    resultMap.put(relPath, new LocalFileInfo(relPath, file, attrs.lastModifiedTime().toMillis(), attrs.size()));
+                    result.add(new LocalFileInfo(relPath, file, attrs.lastModifiedTime().toMillis(), attrs.size()));
                 } catch (IOException ignored) {}
             }
         }
@@ -96,38 +66,41 @@ public class FolderSyncTask {
         );
 
         for (String relDirPath : configDirs) {
-            Path dir = gameRootDir.resolve(relDirPath);
-            if (Files.isDirectory(dir) && !Files.isSymbolicLink(dir)) {
-                Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                    @Override
-                    public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
-                        if (Files.isSymbolicLink(path) || !attrs.isRegularFile()) {
-                            return FileVisitResult.CONTINUE;
-                        }
-                        String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                        for (String ext : IGNORED_EXTENSIONS) {
-                            if (fileName.endsWith(ext)) return FileVisitResult.CONTINUE;
-                        }
-                        String relPath = gameRootDir.relativize(path).toString().replace('\\', '/');
-                        resultMap.put(relPath, new LocalFileInfo(relPath, path, attrs.lastModifiedTime().toMillis(), attrs.size()));
-                        return FileVisitResult.CONTINUE;
-                    }
-
-                    @Override
-                    public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
-                        if (Files.isSymbolicLink(d)) return FileVisitResult.SKIP_SUBTREE;
-                        return FileVisitResult.CONTINUE;
-                    }
-
-                    @Override
-                    public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-            }
+            scanDirectoryInternal(gameRootDir.resolve(relDirPath), gameRootDir, result);
         }
 
-        return new ArrayList<>(resultMap.values());
+        return result;
+    }
+
+    private static void scanDirectoryInternal(Path dir, Path baseDir, List<LocalFileInfo> result) throws IOException {
+        if (!Files.isDirectory(dir) || Files.isSymbolicLink(dir)) return;
+
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+                if (Files.isSymbolicLink(path) || !attrs.isRegularFile()) {
+                    return FileVisitResult.CONTINUE;
+                }
+                String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                for (String ext : IGNORED_EXTENSIONS) {
+                    if (fileName.endsWith(ext)) return FileVisitResult.CONTINUE;
+                }
+                String relPath = baseDir.relativize(path).toString().replace('\\', '/');
+                result.add(new LocalFileInfo(relPath, path, attrs.lastModifiedTime().toMillis(), attrs.size()));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attrs) {
+                if (Files.isSymbolicLink(d)) return FileVisitResult.SKIP_SUBTREE;
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     /**

@@ -51,7 +51,7 @@ public class LitematicaPathNormalizer {
 
         try {
             JsonElement root = JsonParser.parseString(jsonContent);
-            boolean modified = transformToPortable(root, schematicsDir, gameRootDir);
+            boolean modified = transformTree(root, schematicsDir, gameRootDir, LitematicaPathNormalizer::makePortablePath);
             return modified ? GSON.toJson(root) : jsonContent;
         } catch (Exception e) {
             SyncLogger.warn("[SimpleSync] Failed to normalize Litematica JSON to portable format: {}", e.getMessage());
@@ -73,7 +73,7 @@ public class LitematicaPathNormalizer {
 
         try {
             JsonElement root = JsonParser.parseString(jsonContent);
-            boolean modified = transformToLocal(root, schematicsDir, gameRootDir);
+            boolean modified = transformTree(root, schematicsDir, gameRootDir, LitematicaPathNormalizer::makeLocalPath);
             return modified ? GSON.toJson(root) : jsonContent;
         } catch (Exception e) {
             SyncLogger.warn("[SimpleSync] Failed to localize Litematica JSON to local paths: {}", e.getMessage());
@@ -105,54 +105,12 @@ public class LitematicaPathNormalizer {
         return false;
     }
 
-    // ─── Internal Tree Walkers ────────────────────────────────────────────
-
-    private static boolean transformToPortable(JsonElement element, Path schematicsDir, Path gameRootDir) {
-        if (element == null) return false;
-        boolean modified = false;
-
-        if (element.isJsonObject()) {
-            JsonObject obj = element.getAsJsonObject();
-            for (Map.Entry<String, JsonElement> entry : obj.entrySet()) {
-                String key = entry.getKey();
-                JsonElement val = entry.getValue();
-
-                if (val.isJsonPrimitive() && val.getAsJsonPrimitive().isString()) {
-                    String strVal = val.getAsString();
-                    if (isPathCandidate(key, strVal)) {
-                        String portable = makePortablePath(strVal, schematicsDir, gameRootDir);
-                        if (!portable.equals(strVal)) {
-                            obj.addProperty(key, portable);
-                            modified = true;
-                        }
-                    }
-                } else if (val.isJsonObject() || val.isJsonArray()) {
-                    modified |= transformToPortable(val, schematicsDir, gameRootDir);
-                }
-            }
-        } else if (element.isJsonArray()) {
-            JsonArray array = element.getAsJsonArray();
-            for (int i = 0; i < array.size(); i++) {
-                JsonElement item = array.get(i);
-                if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
-                    String strVal = item.getAsString();
-                    if (isPathCandidate("", strVal)) {
-                        String portable = makePortablePath(strVal, schematicsDir, gameRootDir);
-                        if (!portable.equals(strVal)) {
-                            array.set(i, new JsonPrimitive(portable));
-                            modified = true;
-                        }
-                    }
-                } else if (item.isJsonObject() || item.isJsonArray()) {
-                    modified |= transformToPortable(item, schematicsDir, gameRootDir);
-                }
-            }
-        }
-
-        return modified;
+    @FunctionalInterface
+    private interface PathTransformer {
+        String transform(String originalPath, Path schematicsDir, Path gameRootDir);
     }
 
-    private static boolean transformToLocal(JsonElement element, Path schematicsDir, Path gameRootDir) {
+    private static boolean transformTree(JsonElement element, Path schematicsDir, Path gameRootDir, PathTransformer transformer) {
         if (element == null) return false;
         boolean modified = false;
 
@@ -165,14 +123,14 @@ public class LitematicaPathNormalizer {
                 if (val.isJsonPrimitive() && val.getAsJsonPrimitive().isString()) {
                     String strVal = val.getAsString();
                     if (isPathCandidate(key, strVal)) {
-                        String localPath = makeLocalPath(strVal, schematicsDir, gameRootDir);
-                        if (!localPath.equals(strVal)) {
-                            obj.addProperty(key, localPath);
+                        String transformed = transformer.transform(strVal, schematicsDir, gameRootDir);
+                        if (!transformed.equals(strVal)) {
+                            obj.addProperty(key, transformed);
                             modified = true;
                         }
                     }
                 } else if (val.isJsonObject() || val.isJsonArray()) {
-                    modified |= transformToLocal(val, schematicsDir, gameRootDir);
+                    modified |= transformTree(val, schematicsDir, gameRootDir, transformer);
                 }
             }
         } else if (element.isJsonArray()) {
@@ -182,14 +140,14 @@ public class LitematicaPathNormalizer {
                 if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
                     String strVal = item.getAsString();
                     if (isPathCandidate("", strVal)) {
-                        String localPath = makeLocalPath(strVal, schematicsDir, gameRootDir);
-                        if (!localPath.equals(strVal)) {
-                            array.set(i, new JsonPrimitive(localPath));
+                        String transformed = transformer.transform(strVal, schematicsDir, gameRootDir);
+                        if (!transformed.equals(strVal)) {
+                            array.set(i, new JsonPrimitive(transformed));
                             modified = true;
                         }
                     }
                 } else if (item.isJsonObject() || item.isJsonArray()) {
-                    modified |= transformToLocal(item, schematicsDir, gameRootDir);
+                    modified |= transformTree(item, schematicsDir, gameRootDir, transformer);
                 }
             }
         }
