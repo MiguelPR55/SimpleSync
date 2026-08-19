@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 public class SimpleSyncClient implements ClientModInitializer {
 
     private static volatile SyncConflictScreen pendingConflictScreen = null;
+    private static volatile long lastScreenReloadTime = 0;
 
     public static SyncConflictScreen getPendingConflictScreen() {
         return pendingConflictScreen;
@@ -40,7 +41,10 @@ public class SimpleSyncClient implements ClientModInitializer {
         try {
             savesDir = FabricLoader.getInstance().getGameDir().resolve("saves");
         } catch (Throwable t) {
-            savesDir = Minecraft.getInstance().gameDirectory.toPath().resolve("saves");
+            Minecraft client = Minecraft.getInstance();
+            savesDir = (client != null && client.gameDirectory != null)
+                    ? client.gameDirectory.toPath().resolve("saves")
+                    : Path.of("saves");
         }
         CloudSyncManager.getInstance().setSavesDirectory(savesDir);
 
@@ -51,7 +55,9 @@ public class SimpleSyncClient implements ClientModInitializer {
         );
 
         CloudSyncManager.getInstance().setConflictCallback((worldName, localTs, cloudTs, onUseCloud, onKeepLocal) -> {
-            Minecraft.getInstance().execute(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client == null) return;
+            client.execute(() -> {
                 SyncConflictScreen conflictScreen = new SyncConflictScreen(
                         worldName, localTs, cloudTs,
                         () -> {
@@ -64,26 +70,30 @@ public class SimpleSyncClient implements ClientModInitializer {
                         }
                 );
                 pendingConflictScreen = conflictScreen;
-                if (Minecraft.getInstance().gui != null) {
-                    Minecraft.getInstance().gui.setScreen(conflictScreen);
+                if (client.gui != null) {
+                    client.gui.setScreen(conflictScreen);
                 }
             });
         });
 
         CloudSyncManager.getInstance().setConflictCancelCallback(() -> {
-            Minecraft.getInstance().execute(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client == null) return;
+            client.execute(() -> {
                 pendingConflictScreen = null;
-                if (Minecraft.getInstance().gui != null && Minecraft.getInstance().gui.screen() instanceof SyncConflictScreen screen) {
+                if (client.gui != null && client.gui.screen() instanceof SyncConflictScreen screen) {
                     screen.onClose();
                 }
             });
         });
 
         CloudSyncManager.getInstance().setAuthPromptCallback((userCode, verificationUrl, expiresInSeconds, onCancel) -> {
-            Minecraft.getInstance().execute(() -> {
-                if (Minecraft.getInstance().gui != null) {
-                    net.minecraft.client.gui.screens.Screen current = Minecraft.getInstance().gui.screen();
-                    Minecraft.getInstance().gui.setScreen(new DeviceAuthScreen(
+            Minecraft client = Minecraft.getInstance();
+            if (client == null) return;
+            client.execute(() -> {
+                if (client.gui != null) {
+                    net.minecraft.client.gui.screens.Screen current = client.gui.screen();
+                    client.gui.setScreen(new DeviceAuthScreen(
                             current, userCode, verificationUrl, expiresInSeconds, onCancel
                     ));
                 }
@@ -91,21 +101,8 @@ public class SimpleSyncClient implements ClientModInitializer {
         });
 
         // Automatically refresh Singleplayer screen if the user is currently viewing it when sync completes
-        CloudSyncManager.getInstance().setWorldSyncedCallback(worldName -> {
-            Minecraft.getInstance().execute(() -> {
-                if (Minecraft.getInstance().gui != null && Minecraft.getInstance().gui.screen() instanceof ReloadableScreen reloadable) {
-                    reloadable.reloadAndReturn();
-                }
-            });
-        });
-
-        CloudSyncManager.getInstance().setBatchSyncCompleteCallback(() -> {
-            Minecraft.getInstance().execute(() -> {
-                if (Minecraft.getInstance().gui != null && Minecraft.getInstance().gui.screen() instanceof ReloadableScreen reloadable) {
-                    reloadable.reloadAndReturn();
-                }
-            });
-        });
+        CloudSyncManager.getInstance().setWorldSyncedCallback(worldName -> triggerScreenReload(false));
+        CloudSyncManager.getInstance().setBatchSyncCompleteCallback(() -> triggerScreenReload(true));
 
         // Early Startup Sync: Start background cloud sync immediately during client initialization
         // so it runs concurrently while Minecraft is loading assets, textures, and models.
@@ -125,6 +122,21 @@ public class SimpleSyncClient implements ClientModInitializer {
                 WorldSyncTask.cleanupOrphanedDirectories(CloudSyncManager.getInstance().getSavesDirectory());
             }, CloudSyncManager.getInstance().getExecutor());
         }
+    }
+
+    private static void triggerScreenReload(boolean force) {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null) return;
+        client.execute(() -> {
+            long now = System.currentTimeMillis();
+            if (!force && now - lastScreenReloadTime < 250) {
+                return;
+            }
+            lastScreenReloadTime = now;
+            if (client.gui != null && client.gui.screen() instanceof ReloadableScreen reloadable) {
+                reloadable.reloadAndReturn();
+            }
+        });
     }
 
     private static void preloadClientClasses() {

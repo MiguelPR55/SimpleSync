@@ -220,10 +220,11 @@ public class CloudSyncManager {
             SyncLogger.info("[SimpleSync] Batch cloud sync is already running. Skipping duplicate trigger.");
             return CompletableFuture.completedFuture(null);
         }
-        return runAsyncSafely("Sync from cloud failed", "Unknown error", () -> {
-            try {
-                CloudProvider cloud = getProvider();
-                if (!ensureAuthenticated(cloud, this::syncAllWorldsFromCloud)) return;
+        try {
+            return runAsyncSafely("Sync from cloud failed", "Unknown error", () -> {
+                try {
+                    CloudProvider cloud = getProvider();
+                    if (!ensureAuthenticated(cloud, this::syncAllWorldsFromCloud)) return;
 
                 try {
                     setStatus(SyncStatus.CHECKING, "");
@@ -328,6 +329,10 @@ public class CloudSyncManager {
                 isSyncingAll.set(false);
             }
         });
+        } catch (Throwable t) {
+            isSyncingAll.set(false);
+            throw t;
+        }
     }
 
     private boolean processSingleCloudWorld(CloudProvider cloud, Path savesDir, SyncConfig config, WorldMetadata cw, boolean isBatch) throws Exception {
