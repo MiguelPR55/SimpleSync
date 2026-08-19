@@ -38,16 +38,9 @@ public class LitematicaIntegration {
      * @param gameRootDir  The Minecraft root directory (e.g. .minecraft).
      */
     public static void onWorldExit(String worldName, Path gameRootDir) {
-        if (worldName == null || gameRootDir == null) return;
-        if (!isLitematicaAvailable()) return;
-
+        if (worldName == null || gameRootDir == null || !isLitematicaAvailable()) return;
         try {
-            // Give a short tick window for any background file write from Litematica client disconnect handler
-            Path litematicaConfigDir = gameRootDir.resolve("config").resolve("litematica");
-            if (Files.isDirectory(litematicaConfigDir)) {
-                Path schematicsDir = gameRootDir.resolve("schematics");
-                autoHealWorldPlacements(worldName, litematicaConfigDir, schematicsDir);
-            }
+            prepareWorldPlacements(worldName, gameRootDir);
             SyncLogger.info("[SimpleSync] Litematica world-exit hooks processed for: {}", worldName);
         } catch (Exception e) {
             SyncLogger.warn("[SimpleSync] Error during Litematica world-exit handler: {}", e.getMessage());
@@ -62,7 +55,7 @@ public class LitematicaIntegration {
      * @param gameRootDir  The Minecraft game root directory.
      */
     public static void prepareWorldPlacements(String worldName, Path gameRootDir) {
-        if (worldName == null || gameRootDir == null) return;
+        if (worldName == null || gameRootDir == null || !isLitematicaAvailable()) return;
         Path litematicaConfigDir = gameRootDir.resolve("config").resolve("litematica");
         if (!Files.isDirectory(litematicaConfigDir)) return;
 

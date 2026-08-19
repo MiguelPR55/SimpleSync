@@ -207,13 +207,12 @@ public class WorldArchiver {
 
     private static void compressZip(Path worldFolder, Path output) throws IOException {
         if (output.getParent() != null) Files.createDirectories(output.getParent());
-        byte[] buffer = new byte[BUFFER_SIZE];
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZipOutputStream(fos)) {
             walkWorld(worldFolder,
                     (file, name) -> {
                         zos.putNextEntry(new ZipEntry(name));
-                        try (var is = Files.newInputStream(file)) { transfer(is, zos, buffer); }
+                        try (var is = Files.newInputStream(file)) { is.transferTo(zos); }
                         zos.closeEntry();
                     },
                     (dir, name) -> {
@@ -225,7 +224,6 @@ public class WorldArchiver {
 
     private static void compressTarZst(Path worldFolder, Path output) throws IOException {
         if (output.getParent() != null) Files.createDirectories(output.getParent());
-        byte[] buffer = new byte[BUFFER_SIZE];
         int workers = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
 
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
@@ -242,7 +240,7 @@ public class WorldArchiver {
                             entry.setSize(Files.size(file));
                             try { entry.setModTime(Files.getLastModifiedTime(file)); } catch (Exception ignored) {}
                             tos.putArchiveEntry(entry);
-                            try (var is = Files.newInputStream(file)) { transfer(is, tos, buffer); }
+                            try (var is = Files.newInputStream(file)) { is.transferTo(tos); }
                             tos.closeArchiveEntry();
                         },
                         (dir, name) -> {
@@ -256,13 +254,6 @@ public class WorldArchiver {
     }
 
     // ─── Utilities ────────────────────────────────────────────────────────
-
-    private static void transfer(InputStream in, OutputStream out, byte[] buf) throws IOException {
-        int n;
-        while ((n = in.read(buf)) > 0) {
-            out.write(buf, 0, n);
-        }
-    }
 
     private static long copyWithLimit(InputStream in, OutputStream out, byte[] buf, long alreadyExtracted) throws IOException {
         int n;
