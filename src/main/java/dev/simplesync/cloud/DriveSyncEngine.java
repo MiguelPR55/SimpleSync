@@ -73,15 +73,15 @@ public class DriveSyncEngine {
         List<DriveItem> allRemoteItems = listAllDriveItemsUnder(rootRemoteFolderId);
 
         SyncConfig config = SyncConfig.load();
-        List<FolderSyncTask.RemoteFileInfo> remoteFiles = reconstructRemoteFileInfos(allRemoteItems, rootRemoteFolderId);
-        FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(localFiles, remoteFiles, config.fileTracking);
+        RemoteStructure structure = reconstructRemoteStructure(allRemoteItems, rootRemoteFolderId);
+        FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(localFiles, structure.files, config.fileTracking);
 
         Map<String, String> remoteFileIdMap = new ConcurrentHashMap<>();
-        for (FolderSyncTask.RemoteFileInfo remote : remoteFiles) {
+        for (FolderSyncTask.RemoteFileInfo remote : structure.files) {
             remoteFileIdMap.put(remote.relativePath(), remote.fileId());
         }
 
-        Map<String, String> folderPathToIdMap = new ConcurrentHashMap<>(reconstructRemoteFolderMap(allRemoteItems, rootRemoteFolderId));
+        Map<String, String> folderPathToIdMap = new ConcurrentHashMap<>(structure.folders);
         folderPathToIdMap.put("", rootRemoteFolderId);
 
         try {
@@ -368,33 +368,25 @@ public class DriveSyncEngine {
 
     // ─── Path Reconstruction ──────────────────────────────────────────────
 
-    private List<FolderSyncTask.RemoteFileInfo> reconstructRemoteFileInfos(List<DriveItem> items, String rootFolderId) {
-        Map<String, DriveItem> itemMap = new HashMap<>();
+    private record RemoteStructure(List<FolderSyncTask.RemoteFileInfo> files, Map<String, String> folders) {}
+
+    private RemoteStructure reconstructRemoteStructure(List<DriveItem> items, String rootFolderId) {
+        Map<String, DriveItem> itemMap = new HashMap<>(items.size());
         for (DriveItem item : items) itemMap.put(item.id(), item);
 
-        List<FolderSyncTask.RemoteFileInfo> result = new ArrayList<>();
+        List<FolderSyncTask.RemoteFileInfo> files = new ArrayList<>();
+        Map<String, String> folders = new HashMap<>();
         for (DriveItem item : items) {
-            if ("application/vnd.google-apps.folder".equals(item.mimeType())) continue;
             String relPath = buildRelativePath(item, itemMap, rootFolderId);
             if (relPath != null) {
-                result.add(new FolderSyncTask.RemoteFileInfo(relPath, item.id(), item.modifiedTime(), item.size()));
+                if ("application/vnd.google-apps.folder".equals(item.mimeType())) {
+                    folders.put(relPath, item.id());
+                } else {
+                    files.add(new FolderSyncTask.RemoteFileInfo(relPath, item.id(), item.modifiedTime(), item.size()));
+                }
             }
         }
-        return result;
-    }
-
-    private Map<String, String> reconstructRemoteFolderMap(List<DriveItem> items, String rootFolderId) {
-        Map<String, DriveItem> itemMap = new HashMap<>();
-        for (DriveItem item : items) itemMap.put(item.id(), item);
-
-        Map<String, String> result = new HashMap<>();
-        for (DriveItem item : items) {
-            if ("application/vnd.google-apps.folder".equals(item.mimeType())) {
-                String relPath = buildRelativePath(item, itemMap, rootFolderId);
-                if (relPath != null) result.put(relPath, item.id());
-            }
-        }
-        return result;
+        return new RemoteStructure(files, folders);
     }
 
     private String buildRelativePath(DriveItem item, Map<String, DriveItem> itemMap, String rootFolderId) {

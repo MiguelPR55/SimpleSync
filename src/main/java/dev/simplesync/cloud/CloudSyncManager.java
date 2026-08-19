@@ -149,13 +149,7 @@ public class CloudSyncManager {
         String current = currentSyncingWorld;
         if (current != null && current.equals(worldName)) return true;
         StatusSnapshot snap = getStatusSnapshot();
-        if (snap.status().isBusy() && snap.detail() != null) {
-            String detail = snap.detail();
-            int pIdx = detail.indexOf(" (");
-            String base = pIdx > 0 ? detail.substring(0, pIdx) : detail;
-            if (worldName.equals(base)) return true;
-        }
-        return false;
+        return snap.status().isBusy() && worldName.equals(extractBaseWorldName(snap.detail()));
     }
 
     public boolean isInitialSyncCompleted() {
@@ -783,20 +777,13 @@ public class CloudSyncManager {
         SyncStatus status = snapshot.status();
 
         if (status == SyncStatus.UPLOADING || status == SyncStatus.COMPRESSING) {
-            String worldName = snapshot.detail();
-            // In case detail was "WorldName (XX%)", extract the base world name
-            if (worldName != null && !worldName.isEmpty()) {
-                int parenIdx = worldName.indexOf(" (");
-                if (parenIdx > 0) {
-                    worldName = worldName.substring(0, parenIdx);
-                }
-                if (WorldSyncTask.isWorldNameSafe(worldName)) {
-                    Path savesDir = getSavesDirectory();
-                    Path worldFolder = savesDir != null ? savesDir.resolve(worldName) : null;
-                    Path tempArchive = SyncConfig.getConfigDir().resolve("temp").resolve(worldName + ".tar.zst");
-                    if ((worldFolder != null && Files.isDirectory(worldFolder)) || Files.exists(tempArchive)) {
-                        spawnStandaloneUploader(worldName, worldFolder, tempArchive);
-                    }
+            String worldName = extractBaseWorldName(snapshot.detail());
+            if (!worldName.isEmpty() && WorldSyncTask.isWorldNameSafe(worldName)) {
+                Path savesDir = getSavesDirectory();
+                Path worldFolder = savesDir != null ? savesDir.resolve(worldName) : null;
+                Path tempArchive = SyncConfig.getConfigDir().resolve("temp").resolve(worldName + ".tar.zst");
+                if ((worldFolder != null && Files.isDirectory(worldFolder)) || Files.exists(tempArchive)) {
+                    spawnStandaloneUploader(worldName, worldFolder, tempArchive);
                 }
             }
         }
@@ -808,5 +795,11 @@ public class CloudSyncManager {
             try { provider.shutdown(); } catch (Exception ignored) {}
         }
         clearStatus();
+    }
+
+    private static String extractBaseWorldName(String detail) {
+        if (detail == null || detail.isEmpty()) return "";
+        int parenIdx = detail.indexOf(" (");
+        return parenIdx > 0 ? detail.substring(0, parenIdx) : detail;
     }
 }

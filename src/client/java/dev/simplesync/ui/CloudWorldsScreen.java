@@ -40,7 +40,6 @@ public class CloudWorldsScreen extends Screen {
     private String errorMessage = null;
     private int currentPage = 0;
     private final Map<String, Boolean> installedCache = new ConcurrentHashMap<>();
-    private long lastCacheRefresh = 0;
 
     public CloudWorldsScreen(Screen parent) {
         super(Component.translatable("simplesync.cloud_worlds.title"));
@@ -110,7 +109,7 @@ public class CloudWorldsScreen extends Screen {
                 int rowY = 45 + (i - startIdx) * 30;
 
                 Path worldFolder = savesDir.resolve(meta.worldName()).normalize();
-                boolean isInstalled = Files.isDirectory(worldFolder);
+                boolean isInstalled = installedCache.computeIfAbsent(meta.worldName(), k -> Files.isDirectory(worldFolder));
 
                 // Restore / Download button
                 Button restoreBtn = Button.builder(
@@ -173,6 +172,7 @@ public class CloudWorldsScreen extends Screen {
                 List<WorldMetadata> list = cloud.listWorlds();
                 if (this.minecraft != null) {
                     this.minecraft.execute(() -> {
+                        this.installedCache.clear();
                         this.cloudWorlds = list != null ? list : new ArrayList<>();
                         this.loading = false;
                         this.refreshInFlight = false;
@@ -221,21 +221,13 @@ public class CloudWorldsScreen extends Screen {
 
         int startIdx = this.currentPage * ITEMS_PER_PAGE;
         int endIdx = Math.min(this.cloudWorlds.size(), startIdx + ITEMS_PER_PAGE);
-        Path savesDir = CloudSyncManager.getInstance().getSavesDirectory();
         SyncConfig config = SyncConfig.load();
-
-        long now = System.currentTimeMillis();
-        if (now - lastCacheRefresh > 2000) {
-            installedCache.clear();
-            lastCacheRefresh = now;
-        }
 
         for (int i = startIdx; i < endIdx; i++) {
             WorldMetadata meta = this.cloudWorlds.get(i);
             int rowY = 45 + (i - startIdx) * 30;
 
-            Path worldFolder = savesDir.resolve(meta.worldName()).normalize();
-            boolean isInstalled = installedCache.computeIfAbsent(meta.worldName(), k -> Files.isDirectory(worldFolder));
+            boolean isInstalled = installedCache.getOrDefault(meta.worldName(), false);
             boolean isIgnored = config.ignoredCloudWorlds != null && config.ignoredCloudWorlds.contains(meta.worldName());
 
             // Draw world name

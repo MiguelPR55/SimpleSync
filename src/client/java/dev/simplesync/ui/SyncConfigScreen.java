@@ -311,51 +311,33 @@ public class SyncConfigScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (showingTutorial && event.button() == 0) {
-            int centerX = this.width / 2;
-            int startY = 38;
-            int stepGap = 13;
-
-            // Step 1: console.cloud.google.com (index 0)
-            int step1Width = this.font.width(Component.translatable("simplesync.tutorial.step1"));
-            if (event.y() >= startY - 4 && event.y() <= startY + 13
-                    && event.x() >= centerX - step1Width / 2 && event.x() <= centerX + step1Width / 2) {
+            if (isTutorialStepClicked(event, 0, "simplesync.tutorial.step1")) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/");
                 return true;
             }
-
-            // Step 2: Google Drive API Library (index 1)
-            int step2Width = this.font.width(Component.translatable("simplesync.tutorial.step2"));
-            if (event.y() >= (startY + stepGap) - 4 && event.y() <= (startY + stepGap) + 13
-                    && event.x() >= centerX - step2Width / 2 && event.x() <= centerX + step2Width / 2) {
+            if (isTutorialStepClicked(event, 1, "simplesync.tutorial.step2")) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/apis/library/drive.googleapis.com");
                 return true;
             }
-
-            // Step 4: OAuth Consent Screen — Test Users (index 3)
-            int step4Width = this.font.width(Component.translatable("simplesync.tutorial.step4"));
-            if (event.y() >= (startY + stepGap * 3) - 4 && event.y() <= (startY + stepGap * 3) + 13
-                    && event.x() >= centerX - step4Width / 2 && event.x() <= centerX + step4Width / 2) {
+            if (isTutorialStepClicked(event, 3, "simplesync.tutorial.step4")
+                    || isTutorialStepClicked(event, 4, "simplesync.tutorial.step5")) {
                 confirmAndOpenUrl(this, "https://console.cloud.google.com/auth/audience");
                 return true;
             }
-
-            // Step 5: Publish App (index 4)
-            int step5Width = this.font.width(Component.translatable("simplesync.tutorial.step5"));
-            if (event.y() >= (startY + stepGap * 4) - 4 && event.y() <= (startY + stepGap * 4) + 13
-                    && event.x() >= centerX - step5Width / 2 && event.x() <= centerX + step5Width / 2) {
-                confirmAndOpenUrl(this, "https://console.cloud.google.com/auth/audience");
-                return true;
-            }
-
-            // Step 8: config/simplesync/ folder (index 7)
-            int step8Width = this.font.width(Component.translatable("simplesync.tutorial.step8"));
-            if (event.y() >= (startY + stepGap * 7) - 4 && event.y() <= (startY + stepGap * 7) + 13
-                    && event.x() >= centerX - step8Width / 2 && event.x() <= centerX + step8Width / 2) {
+            if (isTutorialStepClicked(event, 7, "simplesync.tutorial.step8")) {
                 DesktopUtil.openFile(SyncConfig.getConfigDir().toFile());
                 return true;
             }
         }
         return super.mouseClicked(event, doubleClick);
+    }
+
+    private boolean isTutorialStepClicked(MouseButtonEvent event, int stepIndex, String translationKey) {
+        int centerX = this.width / 2;
+        int stepY = 38 + stepIndex * 13;
+        int stepWidth = this.font.width(Component.translatable(translationKey));
+        return event.y() >= stepY - 4 && event.y() <= stepY + 13
+                && event.x() >= centerX - stepWidth / 2 && event.x() <= centerX + stepWidth / 2;
     }
 
     public static void confirmAndOpenUrl(Screen parent, String url) {
