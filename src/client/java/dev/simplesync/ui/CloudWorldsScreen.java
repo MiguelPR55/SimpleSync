@@ -264,7 +264,7 @@ public class CloudWorldsScreen extends Screen {
         int totalPages = (this.cloudWorlds.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
         if (totalPages > 1) {
             String pageStr = (this.currentPage + 1) + " / " + totalPages;
-            extractor.centeredText(this.font, Component.literal(pageStr), this.width / 2, this.height - 25, 0xFFAAAAAA);
+            extractor.centeredText(this.font, Component.literal(pageStr), this.width / 2, this.height - 45, 0xFFAAAAAA);
         }
     }
 

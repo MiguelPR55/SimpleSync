@@ -93,7 +93,7 @@ public abstract class WorldListEntryMixin {
                     this.list.returnToScreen();
                 },
                 Component.translatable("selectWorld.deleteQuestion"),
-                Component.translatable("selectWorld.deleteWarning", worldName),
+                Component.translatable("selectWorld.deleteWarning", displayName),
                 Component.translatable("selectWorld.deleteButton"),
                 CommonComponents.GUI_CANCEL
         ));
