@@ -89,11 +89,14 @@ public class DriveApiClient {
     // ─── Multipart Body ───────────────────────────────────────────────────
 
     public static byte[] buildMultipartBody(String boundary, String jsonMeta, byte[] fileBytes) {
-        var baos = new ByteArrayOutputStream();
+        int estimatedSize = (fileBytes != null ? fileBytes.length : 0) + (jsonMeta != null ? jsonMeta.length() : 0) + 256;
+        var baos = new ByteArrayOutputStream(estimatedSize);
         try {
             baos.write(("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + jsonMeta + "\r\n").getBytes(StandardCharsets.UTF_8));
             baos.write(("--" + boundary + "\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-            baos.write(fileBytes);
+            if (fileBytes != null) {
+                baos.write(fileBytes);
+            }
             baos.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new UncheckedIOException(e);

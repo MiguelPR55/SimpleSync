@@ -226,7 +226,7 @@ public class WorldArchiver {
     private static void compressTarZst(Path worldFolder, Path output) throws IOException {
         ZstdNativeLoader.ensureLoaded();
         if (output.getParent() != null) Files.createDirectories(output.getParent());
-        int workers = Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors()));
+        int workers = Math.min(6, Math.max(1, Runtime.getRuntime().availableProcessors()));
 
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZstdOutputStream(fos, ZSTD_COMPRESSION_LEVEL)) {
