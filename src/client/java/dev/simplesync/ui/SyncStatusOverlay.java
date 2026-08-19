@@ -67,7 +67,7 @@ public class SyncStatusOverlay {
         int textWidth = font.width(displayText);
         int screenWidth = extractor.guiWidth();
 
-        int x = screenWidth - textWidth - MARGIN - PADDING * 2;
+        int x = Math.max(MARGIN, screenWidth - textWidth - MARGIN - PADDING * 2);
         int y = MARGIN;
 
         // Calculate opacity for fade effect

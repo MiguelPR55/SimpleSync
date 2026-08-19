@@ -203,6 +203,10 @@ public class WorldArchiver {
                 if (!entryName.isEmpty()) dirConsumer.accept(dir, entryName);
                 return FileVisitResult.CONTINUE;
             }
+            @Override public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                SyncLogger.warn("[SimpleSync] Skipping unreadable file during compression: {} ({})", file, exc != null ? exc.getMessage() : "unknown");
+                return FileVisitResult.CONTINUE;
+            }
         });
     }
 

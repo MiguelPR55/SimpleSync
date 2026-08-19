@@ -516,6 +516,9 @@ public class CloudSyncManager {
     public CompletableFuture<Void> restoreWorldFromCloudAsync(String worldName, Runnable onComplete) {
         return runAsyncSafely("Restore failed: " + worldName, "Unknown error", () -> {
             if (!WorldSyncTask.isWorldNameSafe(worldName)) throw new IllegalArgumentException("Invalid name");
+            if (dev.simplesync.SimpleSync.isWorldRunning(worldName)) {
+                throw new IllegalStateException("Cannot restore world '" + worldName + "' while it is actively open in-game");
+            }
             CloudProvider cloud = getProvider();
             if (!ensureAuthenticated(cloud, () -> restoreWorldFromCloudAsync(worldName, onComplete))) return;
 

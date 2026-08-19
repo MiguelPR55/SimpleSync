@@ -110,6 +110,7 @@ public class CloudWorldsScreen extends Screen {
 
                 Path worldFolder = savesDir.resolve(meta.worldName()).normalize();
                 boolean isInstalled = installedCache.computeIfAbsent(meta.worldName(), k -> Files.isDirectory(worldFolder));
+                boolean isRunning = dev.simplesync.SimpleSync.isWorldRunning(meta.worldName());
 
                 // Restore / Download button
                 Button restoreBtn = Button.builder(
@@ -123,6 +124,7 @@ public class CloudWorldsScreen extends Screen {
                             });
                         }
                 ).bounds(this.width - 220, rowY, 100, 20).build();
+                restoreBtn.active = !isRunning;
                 this.addRenderableWidget(restoreBtn);
 
                 // Delete from Drive button
@@ -147,6 +149,7 @@ public class CloudWorldsScreen extends Screen {
                             }, Component.translatable("selectWorld.deleteQuestion"), Component.translatable("selectWorld.deleteWarning", meta.worldName()), Component.translatable("selectWorld.deleteButton"), CommonComponents.GUI_CANCEL));
                         }
                 ).bounds(this.width - 115, rowY, 95, 20).build();
+                deleteBtn.active = !isRunning;
                 this.addRenderableWidget(deleteBtn);
             }
         }

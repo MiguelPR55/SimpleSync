@@ -45,7 +45,7 @@ public abstract class WorldListEntryMixin {
             return;
         }
 
-        if (!syncManager.isWorldSynchronized(worldId)) {
+        if (syncManager.getProvider().isAuthenticated() && !syncManager.isWorldSynchronized(worldId)) {
             SyncLogger.warn("[SimpleSync] Prevented joining world '{}' because it is not yet synchronized.", worldId);
             dev.simplesync.ui.SyncToast.showWorldPendingToast(displayName);
             ci.cancel();

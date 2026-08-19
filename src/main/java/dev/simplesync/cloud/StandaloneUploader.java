@@ -53,8 +53,19 @@ public class StandaloneUploader {
             dev.simplesync.sync.ZstdNativeLoader.ensureLoaded();
             SyncConfig config = SyncConfig.load();
 
-            // If archive doesn't exist yet, compress the world directory now
-            if (!Files.exists(targetArchive) && worldDir != null && Files.isDirectory(worldDir)) {
+            // If archive doesn't exist or is corrupt/incomplete, compress the world directory now
+            boolean validArchive = false;
+            if (Files.exists(targetArchive)) {
+                try {
+                    dev.simplesync.sync.WorldArchiver.detectFormat(targetArchive);
+                    validArchive = true;
+                } catch (Exception e) {
+                    SyncLogger.warn("[SimpleSync-Uploader] Incomplete or corrupted temporary archive detected ({}). Re-compressing...", e.getMessage());
+                    try { Files.deleteIfExists(targetArchive); } catch (Exception ignored) {}
+                }
+            }
+
+            if (!validArchive && worldDir != null && Files.isDirectory(worldDir)) {
                 SyncLogger.info("[SimpleSync-Uploader] Compressing world directory: {}", worldDir);
                 Files.createDirectories(targetArchive.getParent());
                 WorldSyncTask.compressWorld(worldDir, targetArchive);
