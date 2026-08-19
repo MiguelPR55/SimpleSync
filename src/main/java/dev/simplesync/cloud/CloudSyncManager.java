@@ -693,10 +693,6 @@ public class CloudSyncManager {
         return CompletableFuture.runAsync(() -> {
             try { task.run(); }
             catch (Throwable t) {
-                if (getStatus() == SyncStatus.AUTHENTICATING) {
-                    SyncLogger.info("[SimpleSync] {} - authentication in progress, keeping AUTHENTICATING status.", errorPrefix);
-                    return;
-                }
                 Throwable cause = t;
                 while (cause.getCause() != null && cause != cause.getCause()) {
                     if (cause instanceof DeviceCodeAuthenticator.AuthCancelledException) break;
@@ -705,6 +701,8 @@ public class CloudSyncManager {
                 if (cause instanceof DeviceCodeAuthenticator.AuthCancelledException) {
                     SyncLogger.info("[SimpleSync] Authentication cancelled by user");
                     clearStatus();
+                } else if (getStatus() == SyncStatus.AUTHENTICATING && getProvider() != null && getProvider().isAuthenticating()) {
+                    SyncLogger.info("[SimpleSync] {} - authentication in progress, keeping AUTHENTICATING status.", errorPrefix);
                 } else {
                     SyncLogger.error("[SimpleSync] {}", errorPrefix, t);
                     setStatus(SyncStatus.ERROR, t.getMessage() != null ? t.getMessage() : defaultMsg);

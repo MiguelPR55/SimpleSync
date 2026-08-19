@@ -397,10 +397,12 @@ public class DriveSyncEngine {
             if (!visited.add(curr.id())) return null;
             parts.addFirst(curr.name());
             String parentId = curr.parentId();
-            if (parentId == null || parentId.equals(rootFolderId)) break;
+            if (parentId == null || parentId.equals(rootFolderId)) {
+                return String.join("/", parts);
+            }
             curr = itemMap.get(parentId);
         }
-        return String.join("/", parts);
+        return null;
     }
 
     private synchronized String resolveOrCreateRemoteFolderPath(String relFolderPath, String rootFolderId,

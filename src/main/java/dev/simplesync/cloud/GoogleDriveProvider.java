@@ -370,7 +370,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
                 HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(sessionUrl))
                         .PUT(bodyPub).timeout(Duration.ofMinutes(15));
-                if (curOffset > 0) {
+                if (fileSize > 0) {
                     reqBuilder.header("Content-Range", "bytes " + curOffset + "-" + (fileSize - 1) + "/" + fileSize);
                 }
 
