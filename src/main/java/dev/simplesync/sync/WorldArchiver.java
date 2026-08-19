@@ -21,7 +21,7 @@ import com.github.luben.zstd.ZstdOutputStream;
 public class WorldArchiver {
 
     private static final int BUFFER_SIZE = 262_144; // 256 KB
-    private static final int ZSTD_COMPRESSION_LEVEL = 3; // Best speed-to-ratio for real-time game saves
+    private static final int ZSTD_COMPRESSION_LEVEL = 4; // Optimal speed-to-ratio and bandwidth balance for game saves
     private static final long MAX_EXTRACT_SIZE = 50L * 1024 * 1024 * 1024; // 50 GB zip-bomb limit
     private static final String SUFFIX_STAGING = "_staging";
     private static final String SUFFIX_BACKUP = "_backup";
