@@ -50,6 +50,7 @@ public class StandaloneUploader {
         CloudProvider provider = null;
         try {
             SyncConfig.setConfigDir(configDir);
+            dev.simplesync.sync.ZstdNativeLoader.ensureLoaded();
             SyncConfig config = SyncConfig.load();
 
             // If archive doesn't exist yet, compress the world directory now
