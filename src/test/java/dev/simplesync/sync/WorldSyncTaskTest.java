@@ -277,4 +277,45 @@ public class WorldSyncTaskTest {
         assertTrue(Files.exists(extractedFile));
         assertArrayEquals(payload, Files.readAllBytes(extractedFile));
     }
+
+    @Test
+    void testCompressAndExtractWorld_LongPathsAndUnicode() throws IOException {
+        Path complexWorldDir = tempDir.resolve("ComplexWorld");
+        Files.createDirectories(complexWorldDir);
+
+        // Nested subdirectories and long file path (> 100 chars)
+        Path deepFolder = complexWorldDir.resolve("dimensions/minecraft/the_nether/entities/data/very/deeply/nested/structure/folder");
+        Files.createDirectories(deepFolder);
+        Path longPathFile = deepFolder.resolve("extra_long_filename_for_testing_gnu_longlink_posix_support_in_world_archiver_123456789.dat");
+        byte[] testBytes = "gnu-longlink-test-payload-12345".getBytes(StandardCharsets.UTF_8);
+        Files.write(longPathFile, testBytes);
+
+        // Unicode path
+        Path unicodeFile = complexWorldDir.resolve("mundo_español_áéíóú_日本語.dat");
+        byte[] unicodeBytes = "unicode-test-payload".getBytes(StandardCharsets.UTF_8);
+        Files.write(unicodeFile, unicodeBytes);
+
+        // Empty file
+        Path emptyFile = complexWorldDir.resolve("empty.dat");
+        Files.write(emptyFile, new byte[0]);
+
+        Path archive = tempDir.resolve("complexworld.tar.zst");
+        WorldSyncTask.compressWorld(complexWorldDir, archive);
+        assertTrue(Files.exists(archive));
+
+        Path extractedDir = tempDir.resolve("ExtractedComplexWorld");
+        WorldSyncTask.extractWorld(archive, extractedDir);
+
+        Path extractedLong = extractedDir.resolve("dimensions/minecraft/the_nether/entities/data/very/deeply/nested/structure/folder/extra_long_filename_for_testing_gnu_longlink_posix_support_in_world_archiver_123456789.dat");
+        assertTrue(Files.exists(extractedLong), "Long path file should exist in extracted directory");
+        assertArrayEquals(testBytes, Files.readAllBytes(extractedLong));
+
+        Path extractedUnicode = extractedDir.resolve("mundo_español_áéíóú_日本語.dat");
+        assertTrue(Files.exists(extractedUnicode), "Unicode file should exist in extracted directory");
+        assertArrayEquals(unicodeBytes, Files.readAllBytes(extractedUnicode));
+
+        Path extractedEmpty = extractedDir.resolve("empty.dat");
+        assertTrue(Files.exists(extractedEmpty), "Empty file should exist in extracted directory");
+        assertEquals(0, Files.size(extractedEmpty));
+    }
 }
