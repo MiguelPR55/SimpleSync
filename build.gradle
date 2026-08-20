@@ -60,13 +60,6 @@ dependencies {
         transitive = false
     }
 
-    implementation('commons-io:commons-io:2.18.0') {
-        transitive = false
-    }
-    shadowBundle('commons-io:commons-io:2.18.0') {
-        transitive = false
-    }
-
     implementation 'com.github.luben:zstd-jni:1.5.6-8'
     shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
 
@@ -90,7 +83,6 @@ shadowJar {
     archiveClassifier = 'shadow-dev'
 
     relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
-    relocate 'org.apache.commons.io', 'dev.simplesync.shadow.org.apache.commons.io'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'
@@ -120,38 +112,24 @@ shadowJar {
     exclude '**/archivers/ArchiveStreamFactory*'
     exclude '**/archivers/ArchiveStreamProvider*'
     exclude '**/archivers/Lister*'
-    exclude '**/archivers/zip/ZipFile*'
-    exclude '**/archivers/zip/ZipArchive*'
-    exclude '**/archivers/zip/Scatter*'
-    exclude '**/archivers/zip/ParallelScatter*'
-    exclude '**/archivers/zip/PKWare*'
-    exclude '**/archivers/zip/ExtraField*'
-    exclude '**/archivers/zip/X*'
-    exclude '**/archivers/zip/ZipSplit*'
-    exclude '**/archivers/zip/Exploding*'
-    exclude '**/archivers/zip/Unshrinking*'
-    exclude '**/archivers/zip/AbstractUnicodeExtraField*'
-    exclude '**/archivers/zip/AsiExtraField*'
-    exclude '**/archivers/zip/ResourceAlignmentExtraField*'
-    exclude '**/archivers/zip/UnicodeCommentExtraField*'
-    exclude '**/archivers/zip/UnicodePathExtraField*'
-    exclude '**/archivers/zip/UnixStat*'
-    exclude '**/archivers/zip/UnparseableExtraField*'
-    exclude '**/archivers/zip/UnrecognizedExtraField*'
+    exclude '**/archivers/tar/TarFile*'
+    exclude '**/archivers/zip/**'
     exclude '**/compressors/**'
     exclude '**/harmony/**'
     exclude '**/changes/**'
     exclude '**/parallel/**'
-
-    // Exclude unused commons-io packages
-    exclude '**/commons/io/filefilter/**'
-    exclude '**/commons/io/monitor/**'
-    exclude '**/commons/io/comparator/**'
-    exclude '**/commons/io/serialization/**'
-    exclude '**/commons/io/function/**'
-    exclude '**/commons/io/build/**'
-    exclude '**/commons/io/file/**'
-    exclude '**/commons/io/input/**'
+    exclude '**/java/util/jar/**'
+    exclude '**/utils/BitInputStream*'
+    exclude '**/utils/BoundedArchiveInputStream*'
+    exclude '**/utils/BoundedSeekableByteChannelInputStream*'
+    exclude '**/utils/CRC32VerifyingInputStream*'
+    exclude '**/utils/ChecksumCalculatingInputStream*'
+    exclude '**/utils/ChecksumVerifyingInputStream*'
+    exclude '**/utils/FixedLengthBlockOutputStream*'
+    exclude '**/utils/MultiReadOnlySeekableByteChannel*'
+    exclude '**/utils/SeekableInMemoryByteChannel*'
+    exclude '**/utils/OsgiUtils*'
+    exclude '**/utils/ServiceLoaderIterator*'
 }
 
 remapJar {
