@@ -63,9 +63,8 @@ dependencies {
     implementation 'com.github.luben:zstd-jni:1.5.6-8'
     shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
 
-    // Gson is provided by Minecraft at runtime, but needed for detached StandaloneUploader process
+    // Gson is provided by Minecraft at runtime and resolved dynamically for StandaloneUploader
     implementation 'com.google.code.gson:gson:2.11.0'
-    shadowBundle 'com.google.code.gson:gson:2.11.0'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -102,9 +101,8 @@ shadowJar {
     exclude 'aix/**'
     exclude 'freebsd/**'
 
-    // Exclude compile-time annotations and unused SQL adapters in Gson
+    // Exclude unused metadata and compile-time annotations
     exclude 'com/google/errorprone/**'
-    exclude 'com/google/gson/internal/sql/**'
     exclude '**/package-info.class'
     exclude '**/module-info.class'
 

@@ -732,9 +732,20 @@ public class CloudSyncManager {
 
             var modContainer = net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("simplesync");
             if (modContainer.isEmpty()) return false;
-            String classpath = modContainer.get().getOrigin().getPaths().stream()
-                    .map(p -> p.toAbsolutePath().toString())
-                    .collect(Collectors.joining(File.pathSeparator));
+            List<String> cpEntries = new ArrayList<>();
+            modContainer.get().getOrigin().getPaths().forEach(p -> cpEntries.add(p.toAbsolutePath().toString()));
+            try {
+                var codeSource = com.google.gson.Gson.class.getProtectionDomain().getCodeSource();
+                if (codeSource != null && codeSource.getLocation() != null) {
+                    Path gsonPath = Path.of(codeSource.getLocation().toURI());
+                    if (Files.exists(gsonPath)) {
+                        cpEntries.add(gsonPath.toAbsolutePath().toString());
+                    }
+                }
+            } catch (Exception e) {
+                SyncLogger.warn("[SimpleSync] Could not resolve external Gson path: {}", e.getMessage());
+            }
+            String classpath = String.join(File.pathSeparator, cpEntries);
 
             List<String> command = new ArrayList<>();
             command.add(javaBin);
