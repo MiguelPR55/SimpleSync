@@ -53,18 +53,18 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    implementation('org.apache.commons:commons-compress:1.28.0') {
-        transitive = false
-    }
-    shadowBundle('org.apache.commons:commons-compress:1.28.0') {
-        transitive = false
-    }
+    implementation 'org.apache.commons:commons-compress:1.28.0'
+    shadowBundle 'org.apache.commons:commons-compress:1.28.0'
+
+    implementation 'commons-io:commons-io:2.18.0'
+    shadowBundle 'commons-io:commons-io:2.18.0'
 
     implementation 'com.github.luben:zstd-jni:1.5.6-8'
     shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
 
-    // Gson is provided by Minecraft and Fabric Loader at runtime
+    // Gson is provided by Minecraft at runtime, but needed for detached StandaloneUploader process
     implementation 'com.google.code.gson:gson:2.11.0'
+    shadowBundle 'com.google.code.gson:gson:2.11.0'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -82,6 +82,7 @@ shadowJar {
     archiveClassifier = 'shadow-dev'
 
     relocate 'org.apache.commons.compress', 'dev.simplesync.shadow.org.apache.commons.compress'
+    relocate 'org.apache.commons.io', 'dev.simplesync.shadow.org.apache.commons.io'
 
     // Exclude duplicate META-INF files
     exclude 'META-INF/*.SF'
@@ -101,13 +102,11 @@ shadowJar {
     exclude 'freebsd/**'
 
     // Exclude unused compression formats and archivers from commons-compress
-    exclude '**/archivers/zip/**'
     exclude '**/archivers/sevenz/**'
     exclude '**/archivers/cpio/**'
     exclude '**/archivers/dump/**'
     exclude '**/archivers/ar/**'
     exclude '**/archivers/arj/**'
-    exclude '**/archivers/jar/**'
     exclude '**/archivers/examples/**'
     exclude '**/archivers/ArchiveStreamFactory*'
     exclude '**/archivers/ArchiveStreamProvider*'
