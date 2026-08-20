@@ -53,11 +53,19 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    implementation 'org.apache.commons:commons-compress:1.28.0'
-    shadowBundle 'org.apache.commons:commons-compress:1.28.0'
+    implementation('org.apache.commons:commons-compress:1.28.0') {
+        transitive = false
+    }
+    shadowBundle('org.apache.commons:commons-compress:1.28.0') {
+        transitive = false
+    }
 
-    implementation 'commons-io:commons-io:2.18.0'
-    shadowBundle 'commons-io:commons-io:2.18.0'
+    implementation('commons-io:commons-io:2.18.0') {
+        transitive = false
+    }
+    shadowBundle('commons-io:commons-io:2.18.0') {
+        transitive = false
+    }
 
     implementation 'com.github.luben:zstd-jni:1.5.6-8'
     shadowBundle 'com.github.luben:zstd-jni:1.5.6-8'
@@ -94,7 +102,7 @@ shadowJar {
     exclude 'META-INF/DEPENDENCIES'
     exclude 'META-INF/maven/**'
 
-    // Exclude all bundled native binaries (downloaded on demand by ZstdNativeLoader to keep mod JAR ~300KB)
+    // Exclude all bundled native binaries (downloaded on demand by ZstdNativeLoader to keep mod JAR minimal)
     exclude 'darwin/**'
     exclude 'linux/**'
     exclude 'win/**'
@@ -107,14 +115,43 @@ shadowJar {
     exclude '**/archivers/dump/**'
     exclude '**/archivers/ar/**'
     exclude '**/archivers/arj/**'
+    exclude '**/archivers/jar/**'
     exclude '**/archivers/examples/**'
     exclude '**/archivers/ArchiveStreamFactory*'
     exclude '**/archivers/ArchiveStreamProvider*'
     exclude '**/archivers/Lister*'
+    exclude '**/archivers/zip/ZipFile*'
+    exclude '**/archivers/zip/ZipArchive*'
+    exclude '**/archivers/zip/Scatter*'
+    exclude '**/archivers/zip/ParallelScatter*'
+    exclude '**/archivers/zip/PKWare*'
+    exclude '**/archivers/zip/ExtraField*'
+    exclude '**/archivers/zip/X*'
+    exclude '**/archivers/zip/ZipSplit*'
+    exclude '**/archivers/zip/Exploding*'
+    exclude '**/archivers/zip/Unshrinking*'
+    exclude '**/archivers/zip/AbstractUnicodeExtraField*'
+    exclude '**/archivers/zip/AsiExtraField*'
+    exclude '**/archivers/zip/ResourceAlignmentExtraField*'
+    exclude '**/archivers/zip/UnicodeCommentExtraField*'
+    exclude '**/archivers/zip/UnicodePathExtraField*'
+    exclude '**/archivers/zip/UnixStat*'
+    exclude '**/archivers/zip/UnparseableExtraField*'
+    exclude '**/archivers/zip/UnrecognizedExtraField*'
     exclude '**/compressors/**'
     exclude '**/harmony/**'
     exclude '**/changes/**'
     exclude '**/parallel/**'
+
+    // Exclude unused commons-io packages
+    exclude '**/commons/io/filefilter/**'
+    exclude '**/commons/io/monitor/**'
+    exclude '**/commons/io/comparator/**'
+    exclude '**/commons/io/serialization/**'
+    exclude '**/commons/io/function/**'
+    exclude '**/commons/io/build/**'
+    exclude '**/commons/io/file/**'
+    exclude '**/commons/io/input/**'
 }
 
 remapJar {
