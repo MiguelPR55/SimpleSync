@@ -86,7 +86,7 @@ public class SimpleSync implements ModInitializer {
         for (Class<?> cls : classes) {
             try {
                 Class.forName(cls.getName(), true, SimpleSync.class.getClassLoader());
-            } catch (ClassNotFoundException ignored) {}
+            } catch (Throwable ignored) {}
         }
     }
 

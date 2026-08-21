@@ -65,6 +65,13 @@ public class StandaloneUploader {
                 }
             }
 
+            if (worldDir == null && gameDir != null) {
+                Path candidate = gameDir.resolve("saves").resolve(worldName);
+                if (Files.isDirectory(candidate)) {
+                    worldDir = candidate;
+                }
+            }
+
             if (!validArchive && worldDir != null && Files.isDirectory(worldDir)) {
                 SyncLogger.info("[SimpleSync-Uploader] Compressing world directory: {}", worldDir);
                 Files.createDirectories(targetArchive.getParent());
@@ -83,8 +90,26 @@ public class StandaloneUploader {
 
             if (uploaded != null) {
                 long newTs = uploaded.lastModified() > 0 ? uploaded.lastModified() : System.currentTimeMillis();
-                long size = Files.size(targetArchive);
-                config.setTracking(worldName, new SyncConfig.WorldTrackingInfo(newTs, size, newTs));
+                long localSize = 0;
+                long localMtime = 0;
+                if (worldDir != null && Files.isDirectory(worldDir)) {
+                    try {
+                        WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldDir);
+                        localSize = stats.size();
+                        localMtime = stats.latestModifiedTime();
+                    } catch (Exception ignored) {}
+                }
+                if (localSize == 0 && Files.exists(targetArchive)) {
+                    try { localSize = Files.size(targetArchive); } catch (Exception ignored) {}
+                }
+                if (localMtime == 0) {
+                    localMtime = newTs;
+                }
+
+                if (config.ignoredCloudWorlds != null) {
+                    config.ignoredCloudWorlds.remove(worldName);
+                }
+                config.setTracking(worldName, new SyncConfig.WorldTrackingInfo(newTs, localSize, localMtime));
                 config.save();
                 SyncLogger.info("[SimpleSync-Uploader] Successfully uploaded '{}' via {}!", worldName, provider.getName());
             }

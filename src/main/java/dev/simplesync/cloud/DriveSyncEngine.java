@@ -178,10 +178,17 @@ public class DriveSyncEngine {
                     .method("PATCH", bodyPublisher)
                     .header("Content-Type", "application/octet-stream");
             HttpResponse<String> resp = api.send(req, 3);
-            if (resp.statusCode() != 200) {
+            if (resp.statusCode() == 200) {
+                return;
+            } else if (resp.statusCode() == 404) {
+                remoteFileIdMap.remove(relPath);
+                // Fall through to create as new file below
+            } else {
                 throw new IOException("Failed to update file " + relPath + ": HTTP " + resp.statusCode());
             }
-        } else {
+        }
+
+        {
             long fileSize = customBytes != null ? customBytes.length : local.size();
             if (fileSize > 5L * 1024 * 1024 && customBytes == null) {
                 // Resumable streaming upload for larger files

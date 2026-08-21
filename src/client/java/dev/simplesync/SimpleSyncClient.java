@@ -149,7 +149,7 @@ public class SimpleSyncClient implements ClientModInitializer {
         for (Class<?> cls : classes) {
             try {
                 Class.forName(cls.getName(), true, SimpleSyncClient.class.getClassLoader());
-            } catch (ClassNotFoundException ignored) {}
+            } catch (Throwable ignored) {}
         }
     }
 }
