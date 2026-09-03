@@ -14,9 +14,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -24,10 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Flow.Subscriber;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 
 /**
  * Google Drive implementation of CloudProvider.
@@ -238,6 +232,15 @@ public class GoogleDriveProvider implements CloudProvider {
             throw new IOException("Refusing to clear symlinked credentials directory");
         }
         TokenStore.clear();
+
+        // Clear cached folder IDs from config so next connected account starts fresh
+        SyncConfig config = SyncConfig.load();
+        config.simpleSyncFolderId = null;
+        config.worldsFolderId = null;
+        config.schematicsFolderId = null;
+        config.configsFolderId = null;
+        config.save();
+
         SyncLogger.info("[SimpleSync] Disconnected from Google Drive");
     }
 
@@ -323,92 +326,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
     private HttpResponse<String> uploadPut(String sessionUrl, Path file, String worldName, long fileSize)
             throws IOException {
-        long offset = 0;
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            try {
-                if (offset > 0 || attempt > 1) {
-                    HttpRequest statusReq = HttpRequest.newBuilder(URI.create(sessionUrl))
-                            .PUT(HttpRequest.BodyPublishers.noBody())
-                            .header("Content-Range", "bytes */" + fileSize)
-                            .timeout(Duration.ofSeconds(30)).build();
-                    HttpResponse<String> statusResp = httpClient.send(statusReq, HttpResponse.BodyHandlers.ofString());
-                    if (statusResp.statusCode() == 308) {
-                        String range = statusResp.headers().firstValue("Range").orElse("");
-                        if (range.startsWith("bytes=0-")) {
-                            try { offset = Long.parseLong(range.substring(8)) + 1; } catch (NumberFormatException ignored) {}
-                        }
-                    } else if (statusResp.statusCode() == 200 || statusResp.statusCode() == 201) {
-                        return statusResp;
-                    }
-                }
-
-                final long curOffset = offset;
-                final long remaining = fileSize - curOffset;
-                final AtomicReference<InputStream> openStream = new AtomicReference<>();
-                Supplier<InputStream> supplier = () -> {
-                    InputStream prev = openStream.get();
-                    if (prev != null) {
-                        try { prev.close(); } catch (IOException ignored) {}
-                    }
-                    try {
-                        FileChannel channel = FileChannel.open(file, StandardOpenOption.READ);
-                        if (curOffset > 0) {
-                            channel.position(curOffset);
-                        }
-                        InputStream fis = Channels.newInputStream(channel);
-                        ProgressInputStream pis = new ProgressInputStream(fis, fileSize, worldName, true, curOffset);
-                        openStream.set(pis);
-                        return pis;
-                    } catch (IOException e) { throw new UncheckedIOException(e); }
-                };
-
-                var delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
-                HttpRequest.BodyPublisher bodyPub = new HttpRequest.BodyPublisher() {
-                    @Override public long contentLength() { return remaining; }
-                    @Override public void subscribe(Subscriber<? super ByteBuffer> s) { delegate.subscribe(s); }
-                };
-
-                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(sessionUrl))
-                        .PUT(bodyPub).timeout(Duration.ofMinutes(15));
-                if (fileSize > 0) {
-                    reqBuilder.header("Content-Range", "bytes " + curOffset + "-" + (fileSize - 1) + "/" + fileSize);
-                }
-
-                HttpResponse<String> resp;
-                try {
-                    resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-                } finally {
-                    InputStream s = openStream.get();
-                    if (s != null) {
-                        try { s.close(); } catch (IOException ignored) {}
-                    }
-                }
-                if (resp.statusCode() == 200 || resp.statusCode() == 201) return resp;
-                if (resp.statusCode() == 308 && attempt < 3) continue;
-                if (resp.statusCode() >= 500 && attempt < 3) {
-                    try {
-                        Thread.sleep(2000L * attempt);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new IOException("Upload PUT interrupted during sleep", ie);
-                    }
-                    continue;
-                }
-                return resp;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Upload PUT interrupted", e);
-            } catch (IOException e) {
-                if (attempt == 3) throw e;
-                try {
-                    Thread.sleep(2000L * attempt);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Upload PUT interrupted during sleep", ie);
-                }
-            }
-        }
-        throw new IOException("Upload PUT failed after retries");
+        return api.uploadResumableFile(sessionUrl, file, worldName, fileSize, true);
     }
 
     // ─── Private: Download ────────────────────────────────────────────────
@@ -441,7 +359,11 @@ public class GoogleDriveProvider implements CloudProvider {
             try (InputStream is = new ProgressInputStream(resp.body(), meta.sizeBytes(), worldName, false);
                  OutputStream os = new BufferedOutputStream(
                          Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 262144)) {
-                is.transferTo(os);
+                byte[] buffer = new byte[131072];
+                int n;
+                while ((n = is.read(buffer)) > 0) {
+                    os.write(buffer, 0, n);
+                }
             }
 
             if (expectedSize > 0) {

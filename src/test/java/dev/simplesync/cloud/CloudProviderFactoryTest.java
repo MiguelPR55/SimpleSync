@@ -48,4 +48,16 @@ public class CloudProviderFactoryTest {
         assertEquals("Mock Cloud", created.getName());
         assertTrue(created.isAuthenticated());
     }
+
+    @Test
+    void testCloudSyncManagerResetProvider() {
+        CloudSyncManager manager = CloudSyncManager.getInstance();
+        CloudProvider provider1 = manager.getProvider();
+        assertNotNull(provider1);
+
+        manager.resetProvider();
+        CloudProvider provider2 = manager.getProvider();
+        assertNotNull(provider2);
+        assertNotSame(provider1, provider2);
+    }
 }

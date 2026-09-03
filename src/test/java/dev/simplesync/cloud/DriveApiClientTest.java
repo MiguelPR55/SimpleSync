@@ -42,4 +42,17 @@ public class DriveApiClientTest {
         assertTrue(resultStr.contains("Hello world binary content"));
         assertTrue(resultStr.endsWith("--" + boundary + "--\r\n"));
     }
+
+    @Test
+    void testForceRefreshTokenValidation(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws java.io.IOException {
+        dev.simplesync.config.SyncConfig.setConfigDir(tempDir);
+        DriveTokenManager tokenManager = new DriveTokenManager(java.net.http.HttpClient.newHttpClient());
+
+        // When no token data exists
+        assertThrows(java.io.IOException.class, tokenManager::forceRefreshToken);
+
+        // When token exists but refresh token is missing
+        TokenStore.save(new TokenStore.TokenData("access", null, System.currentTimeMillis() + 3600_000));
+        assertThrows(java.io.IOException.class, tokenManager::forceRefreshToken);
+    }
 }

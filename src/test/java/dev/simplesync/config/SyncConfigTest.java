@@ -115,4 +115,36 @@ public class SyncConfigTest {
         assertTrue(config.autoSyncOnStart);
         assertTrue(Files.exists(tempDir.resolve("config.json.corrupted")), "Corrupted config must be backed up");
     }
+
+    @Test
+    void testFolderIdsPersistenceAndResetting() {
+        SyncConfig config = SyncConfig.load();
+        config.simpleSyncFolderId = "root_123";
+        config.worldsFolderId = "worlds_456";
+        config.schematicsFolderId = "schematics_789";
+        config.configsFolderId = "configs_012";
+        config.save();
+
+        SyncConfig.resetInstance();
+        SyncConfig loaded = SyncConfig.load();
+
+        assertEquals("root_123", loaded.simpleSyncFolderId);
+        assertEquals("worlds_456", loaded.worldsFolderId);
+        assertEquals("schematics_789", loaded.schematicsFolderId);
+        assertEquals("configs_012", loaded.configsFolderId);
+
+        // Resetting (simulating disconnect)
+        loaded.simpleSyncFolderId = null;
+        loaded.worldsFolderId = null;
+        loaded.schematicsFolderId = null;
+        loaded.configsFolderId = null;
+        loaded.save();
+
+        SyncConfig.resetInstance();
+        SyncConfig reloaded = SyncConfig.load();
+        assertNull(reloaded.simpleSyncFolderId);
+        assertNull(reloaded.worldsFolderId);
+        assertNull(reloaded.schematicsFolderId);
+        assertNull(reloaded.configsFolderId);
+    }
 }

@@ -39,18 +39,18 @@ public class SyncConfig {
     private static SyncConfig INSTANCE;
 
     // Configuration fields
-    public boolean autoSyncOnStart = true;
-    public boolean autoSyncOnExit = true;
-    public boolean syncSchematics = true;
-    public boolean syncMasaConfigs = true;
-    public String cloudProvider = "google_drive";
+    public volatile boolean autoSyncOnStart = true;
+    public volatile boolean autoSyncOnExit = true;
+    public volatile boolean syncSchematics = true;
+    public volatile boolean syncMasaConfigs = true;
+    public volatile String cloudProvider = "google_drive";
     public Map<String, WorldTrackingInfo> worldTracking = new ConcurrentHashMap<>();
     public Map<String, FileTrackingInfo> fileTracking = new ConcurrentHashMap<>();
     public Set<String> ignoredCloudWorlds = Collections.newSetFromMap(new ConcurrentHashMap<>());
-    public String simpleSyncFolderId;
-    public String worldsFolderId;
-    public String schematicsFolderId;
-    public String configsFolderId;
+    public volatile String simpleSyncFolderId;
+    public volatile String worldsFolderId;
+    public volatile String schematicsFolderId;
+    public volatile String configsFolderId;
 
     // Legacy fields for backwards-compatibility migration during deserialization
     private Map<String, Long> lastSyncTimestamps;

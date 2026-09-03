@@ -72,10 +72,11 @@ public class StandaloneUploader {
                 }
             }
 
+            WorldSyncTask.WorldStats compressedStats = null;
             if (!validArchive && worldDir != null && Files.isDirectory(worldDir)) {
                 SyncLogger.info("[SimpleSync-Uploader] Compressing world directory: {}", worldDir);
                 Files.createDirectories(targetArchive.getParent());
-                WorldSyncTask.compressWorld(worldDir, targetArchive);
+                compressedStats = WorldSyncTask.compressWorld(worldDir, targetArchive);
             }
 
             if (!Files.exists(targetArchive)) {
@@ -92,7 +93,10 @@ public class StandaloneUploader {
                 long newTs = uploaded.lastModified() > 0 ? uploaded.lastModified() : System.currentTimeMillis();
                 long localSize = 0;
                 long localMtime = 0;
-                if (worldDir != null && Files.isDirectory(worldDir)) {
+                if (compressedStats != null) {
+                    localSize = compressedStats.size();
+                    localMtime = compressedStats.latestModifiedTime();
+                } else if (worldDir != null && Files.isDirectory(worldDir)) {
                     try {
                         WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldDir);
                         localSize = stats.size();

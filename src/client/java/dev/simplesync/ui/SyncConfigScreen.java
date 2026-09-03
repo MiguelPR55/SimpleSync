@@ -129,6 +129,7 @@ public class SyncConfigScreen extends Screen {
             if (authenticated) {
                 try {
                     CloudSyncManager.getInstance().getProvider().disconnect();
+                    CloudSyncManager.getInstance().resetProvider();
                     cachedAuthStatus = false;
                     authenticated = false;
                     authError = null;

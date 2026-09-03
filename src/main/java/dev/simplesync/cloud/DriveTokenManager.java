@@ -101,6 +101,19 @@ public class DriveTokenManager {
         return tokenData.accessToken;
     }
 
+    public synchronized String forceRefreshToken() throws IOException {
+        TokenStore.TokenData tokenData = TokenStore.load();
+        if (tokenData == null) {
+            throw new IOException("Google Drive is not authenticated. Please authenticate.");
+        }
+        if (tokenData.refreshToken == null || tokenData.refreshToken.isEmpty()) {
+            throw new IOException("No refresh token available to refresh access token. Re-authenticate.");
+        }
+        SyncLogger.info("[SimpleSync] Forcing access token refresh...");
+        tokenData = refreshToken(tokenData);
+        return tokenData.accessToken;
+    }
+
     private TokenStore.TokenData refreshToken(TokenStore.TokenData old) throws IOException {
         ClientSecrets secrets = loadClientSecrets();
         if (secrets == null) {

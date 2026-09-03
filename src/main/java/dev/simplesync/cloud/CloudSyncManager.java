@@ -81,6 +81,16 @@ public class CloudSyncManager {
         this.initialSyncCompleted = false;
         this.isSyncingAll.set(false);
         this.status.set(new StatusSnapshot(SyncStatus.IDLE, "", 0L));
+        resetProvider();
+    }
+
+    public synchronized void resetProvider() {
+        if (this.provider != null) {
+            try {
+                this.provider.shutdown();
+            } catch (Exception ignored) {}
+            this.provider = null;
+        }
     }
 
     public CloudProvider getProvider() {
@@ -453,7 +463,7 @@ public class CloudSyncManager {
             setStatus(SyncStatus.COMPRESSING, worldName);
             Path tempArchive = getTempDir().resolve(worldName + ".tar.zst");
             try {
-                WorldSyncTask.compressWorld(worldFolder, tempArchive);
+                WorldSyncTask.WorldStats compressedStats = WorldSyncTask.compressWorld(worldFolder, tempArchive);
                 long archiveSize = Files.size(tempArchive);
                 if (archiveSize > 50L * 1024 * 1024 * 1024) throw new IOException("Compressed archive exceeds 50 GB");
 
@@ -469,7 +479,7 @@ public class CloudSyncManager {
                 }
 
                 long newTs = uploaded != null && uploaded.lastModified() > 0 ? uploaded.lastModified() : System.currentTimeMillis();
-                updateTracking(config, worldName, worldFolder, newTs);
+                updateTracking(config, worldName, compressedStats, newTs);
                 config.save();
                 markWorldSynchronized(worldName);
                 if (!isBatch) setStatus(SyncStatus.DONE, "");
@@ -678,13 +688,23 @@ public class CloudSyncManager {
     }
 
     private void updateTracking(SyncConfig config, String worldName, Path worldFolder, long timestamp) {
-        if (config.ignoredCloudWorlds != null) config.ignoredCloudWorlds.remove(worldName);
         long size = 0, mtime = 0;
         try {
             WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
             size = stats.size();
             mtime = stats.latestModifiedTime();
         } catch (IOException ignored) {}
+        updateTracking(config, worldName, size, mtime, timestamp);
+    }
+
+    private void updateTracking(SyncConfig config, String worldName, WorldSyncTask.WorldStats stats, long timestamp) {
+        long size = stats != null ? stats.size() : 0;
+        long mtime = stats != null ? stats.latestModifiedTime() : 0;
+        updateTracking(config, worldName, size, mtime, timestamp);
+    }
+
+    private void updateTracking(SyncConfig config, String worldName, long size, long mtime, long timestamp) {
+        if (config.ignoredCloudWorlds != null) config.ignoredCloudWorlds.remove(worldName);
         config.setTracking(worldName, new SyncConfig.WorldTrackingInfo(timestamp, size, mtime));
     }
 

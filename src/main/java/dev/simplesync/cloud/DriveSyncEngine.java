@@ -9,6 +9,7 @@ import dev.simplesync.sync.FolderSyncTask;
 import dev.simplesync.util.RetryUtil;
 import dev.simplesync.util.SyncLogger;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -189,7 +190,16 @@ public class DriveSyncEngine {
         }
 
         {
-            long fileSize = customBytes != null ? customBytes.length : local.size();
+            long fileSize;
+            if (customBytes != null) {
+                fileSize = customBytes.length;
+            } else {
+                try {
+                    fileSize = Files.size(local.fullPath());
+                } catch (IOException e) {
+                    fileSize = local.size();
+                }
+            }
             if (fileSize > 5L * 1024 * 1024 && customBytes == null) {
                 // Resumable streaming upload for larger files
                 String initUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,modifiedTime,size";
@@ -203,7 +213,7 @@ public class DriveSyncEngine {
                         .POST(HttpRequest.BodyPublishers.ofString(meta.toString()))
                         .header("Content-Type", "application/json; charset=UTF-8")
                         .header("X-Upload-Content-Type", "application/octet-stream")
-                        .header("X-Upload-Content-Length", String.valueOf(local.size()));
+                        .header("X-Upload-Content-Length", String.valueOf(fileSize));
 
                 HttpResponse<String> initResp = api.send(initReq, 3);
                 if (initResp.statusCode() != 200 && initResp.statusCode() != 201) {
@@ -213,12 +223,7 @@ public class DriveSyncEngine {
                 Optional<String> location = initResp.headers().firstValue("Location");
                 if (location.isEmpty()) throw new IOException("No Location header for resumable upload of " + relPath);
 
-                HttpRequest.Builder putReq = HttpRequest.newBuilder(URI.create(location.get()))
-                        .PUT(HttpRequest.BodyPublishers.ofFile(local.fullPath()))
-                        .timeout(Duration.ofMinutes(15))
-                        .header("Content-Type", "application/octet-stream");
-
-                HttpResponse<String> putResp = api.send(putReq, 3);
+                HttpResponse<String> putResp = api.uploadResumableFile(location.get(), local.fullPath(), relPath, fileSize, false);
                 if (putResp.statusCode() != 200 && putResp.statusCode() != 201) {
                     throw new IOException("Failed to upload new file " + relPath + ": HTTP " + putResp.statusCode());
                 }
@@ -267,8 +272,12 @@ public class DriveSyncEngine {
         Path tempFile = targetFile.resolveSibling(targetFile.getFileName().toString() + ".tmp");
 
         try (InputStream is = resp.body();
-             OutputStream os = Files.newOutputStream(tempFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            is.transferTo(os);
+             OutputStream os = new BufferedOutputStream(Files.newOutputStream(tempFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), 65536)) {
+            byte[] buffer = new byte[65536];
+            int n;
+            while ((n = is.read(buffer)) > 0) {
+                os.write(buffer, 0, n);
+            }
         } catch (IOException e) {
             try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             throw e;

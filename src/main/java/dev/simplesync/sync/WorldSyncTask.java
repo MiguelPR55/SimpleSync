@@ -20,8 +20,8 @@ public class WorldSyncTask {
         return WorldNameValidator.isWorldNameSafe(worldName);
     }
 
-    public static void compressWorld(Path worldFolder, Path outputArchive) throws IOException {
-        WorldArchiver.compressWorld(worldFolder, outputArchive);
+    public static WorldStats compressWorld(Path worldFolder, Path outputArchive) throws IOException {
+        return WorldArchiver.compressWorld(worldFolder, outputArchive);
     }
 
     public static void extractWorld(Path archiveFile, Path worldFolder) throws IOException {

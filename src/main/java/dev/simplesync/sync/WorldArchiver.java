@@ -29,7 +29,7 @@ public class WorldArchiver {
 
     // ─── Public API ───────────────────────────────────────────────────────
 
-    public static void compressWorld(Path worldFolder, Path outputArchive) throws IOException {
+    public static WorldSyncTask.WorldStats compressWorld(Path worldFolder, Path outputArchive) throws IOException {
         if (!Files.isDirectory(worldFolder)) throw new IOException("World folder does not exist: " + worldFolder);
         if (Files.isSymbolicLink(worldFolder)) throw new IOException("Refusing to compress symlinked folder");
         Files.createDirectories(outputArchive.getParent());
@@ -40,9 +40,9 @@ public class WorldArchiver {
         try {
             boolean isZip = outputArchive.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".zip");
             if (isZip) {
-                compressZip(worldFolder, outputArchive);
+                return compressZip(worldFolder, outputArchive);
             } else {
-                compressTarZst(worldFolder, outputArchive);
+                return compressTarZst(worldFolder, outputArchive);
             }
         } catch (Throwable e) {
             try { Files.deleteIfExists(outputArchive); } catch (IOException ignored) {}
@@ -181,26 +181,36 @@ public class WorldArchiver {
     }
 
     // ─── Compression ──────────────────────────────────────────────────────
-
+ 
     @FunctionalInterface
-    private interface EntryConsumer { void accept(Path path, String entryName) throws IOException; }
+    private interface EntryConsumer { void accept(Path path, String entryName, BasicFileAttributes attrs) throws IOException; }
 
-    private static void walkWorld(Path worldFolder, EntryConsumer fileConsumer, EntryConsumer dirConsumer) throws IOException {
+    private static WorldSyncTask.WorldStats walkWorld(Path worldFolder, EntryConsumer fileConsumer, EntryConsumer dirConsumer) throws IOException {
+        final long[] stats = {0, 0};
         Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 if (Files.isSymbolicLink(file) || !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.CONTINUE;
                 String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
                 if (name.equals("session.lock") || name.equals("session.lock.backup") || name.equals("level.dat_old") || name.equals("uid.dat")) return FileVisitResult.CONTINUE;
                 if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part") || name.endsWith(".syncing") || name.endsWith(".download") || name.endsWith(".staging")) return FileVisitResult.CONTINUE;
-                fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'));
+
+                stats[0] += attrs.size();
+                long mtime = attrs.lastModifiedTime().toMillis();
+                if (mtime > stats[1]) stats[1] = mtime;
+
+                fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'), attrs);
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
                 if (Files.isSymbolicLink(dir) || !Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.SKIP_SUBTREE;
                 String dirName = dir.getFileName().toString();
                 if (dirName.endsWith(SUFFIX_STAGING) || dirName.endsWith(SUFFIX_BACKUP)) return FileVisitResult.SKIP_SUBTREE;
+
+                long mtime = attrs.lastModifiedTime().toMillis();
+                if (mtime > stats[1]) stats[1] = mtime;
+
                 String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
-                if (!entryName.isEmpty()) dirConsumer.accept(dir, entryName);
+                if (!entryName.isEmpty()) dirConsumer.accept(dir, entryName, attrs);
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult visitFileFailed(Path file, IOException exc) {
@@ -208,50 +218,69 @@ public class WorldArchiver {
                 return FileVisitResult.CONTINUE;
             }
         });
+        return new WorldSyncTask.WorldStats(stats[0], stats[1]);
     }
 
-    private static void compressZip(Path worldFolder, Path output) throws IOException {
+    private static WorldSyncTask.WorldStats compressZip(Path worldFolder, Path output) throws IOException {
         if (output.getParent() != null) Files.createDirectories(output.getParent());
+        byte[] copyBuf = new byte[65536];
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZipOutputStream(fos)) {
-            walkWorld(worldFolder,
-                    (file, name) -> {
-                        zos.putNextEntry(new ZipEntry(name));
-                        try (var is = Files.newInputStream(file)) { is.transferTo(zos); }
+            return walkWorld(worldFolder,
+                    (file, name, attrs) -> {
+                        ZipEntry entry = new ZipEntry(name);
+                        entry.setSize(attrs.size());
+                        entry.setTime(attrs.lastModifiedTime().toMillis());
+                        zos.putNextEntry(entry);
+                        try (var is = Files.newInputStream(file)) {
+                            int n;
+                            while ((n = is.read(copyBuf)) > 0) {
+                                zos.write(copyBuf, 0, n);
+                            }
+                        }
                         zos.closeEntry();
                     },
-                    (dir, name) -> {
-                        zos.putNextEntry(new ZipEntry(name + "/"));
+                    (dir, name, attrs) -> {
+                        ZipEntry entry = new ZipEntry(name + "/");
+                        entry.setTime(attrs.lastModifiedTime().toMillis());
+                        zos.putNextEntry(entry);
                         zos.closeEntry();
                     });
         }
     }
 
-    private static void compressTarZst(Path worldFolder, Path output) throws IOException {
+    private static WorldSyncTask.WorldStats compressTarZst(Path worldFolder, Path output) throws IOException {
         ZstdNativeLoader.ensureLoaded();
         if (output.getParent() != null) Files.createDirectories(output.getParent());
         int workers = Math.min(6, Math.max(1, Runtime.getRuntime().availableProcessors()));
+        byte[] copyBuf = new byte[65536];
 
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZstdOutputStream(fos, ZSTD_COMPRESSION_LEVEL)) {
             if (workers > 1) {
                 zos.setWorkers(workers);
             }
-            try (var tos = new TarArchiveOutputStream(zos)) {
+            try (var bos = new BufferedOutputStream(zos, BUFFER_SIZE);
+                 var tos = new TarArchiveOutputStream(bos)) {
                 tos.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
                 tos.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
-                walkWorld(worldFolder,
-                        (file, name) -> {
+                return walkWorld(worldFolder,
+                        (file, name, attrs) -> {
                             var entry = new TarArchiveEntry(name);
-                            entry.setSize(Files.size(file));
-                            try { entry.setModTime(Files.getLastModifiedTime(file)); } catch (Exception ignored) {}
+                            entry.setSize(attrs.size());
+                            entry.setModTime(attrs.lastModifiedTime().toMillis());
                             tos.putArchiveEntry(entry);
-                            try (var is = Files.newInputStream(file)) { is.transferTo(tos); }
+                            try (var is = Files.newInputStream(file)) {
+                                int n;
+                                while ((n = is.read(copyBuf)) > 0) {
+                                    tos.write(copyBuf, 0, n);
+                                }
+                            }
                             tos.closeArchiveEntry();
                         },
-                        (dir, name) -> {
+                        (dir, name, attrs) -> {
                             var entry = new TarArchiveEntry(name.endsWith("/") ? name : name + "/");
-                            try { entry.setModTime(Files.getLastModifiedTime(dir)); } catch (Exception ignored) {}
+                            entry.setModTime(attrs.lastModifiedTime().toMillis());
                             tos.putArchiveEntry(entry);
                             tos.closeArchiveEntry();
                         });

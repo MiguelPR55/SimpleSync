@@ -26,14 +26,14 @@ public class SyncStatusOverlay {
         return INSTANCE;
     }
 
-    private long lastRenderTimeMs = -1;
+    private long lastRenderTimeNanos = -1;
 
     public void renderOverlay(GuiGraphicsExtractor extractor) {
-        long now = System.currentTimeMillis();
-        if (now - lastRenderTimeMs < 5) {
+        long nowNanos = System.nanoTime();
+        if (lastRenderTimeNanos > 0 && nowNanos - lastRenderTimeNanos < 500_000L) {
             return;
         }
-        lastRenderTimeMs = now;
+        lastRenderTimeNanos = nowNanos;
 
         CloudSyncManager manager = CloudSyncManager.getInstance();
         StatusSnapshot snapshot = manager.getStatusSnapshot();
