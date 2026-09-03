@@ -34,7 +34,7 @@ public class SimpleSyncClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         SyncLogger.info("[SimpleSync] Initializing client...");
-        preloadClientClasses();
+        java.util.concurrent.CompletableFuture.runAsync(SimpleSyncClient::preloadClientClasses);
         
         // Resolve saves directory early using FabricLoader if available, with Minecraft fallback
         Path savesDir;

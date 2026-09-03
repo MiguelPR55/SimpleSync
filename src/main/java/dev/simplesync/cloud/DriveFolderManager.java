@@ -43,35 +43,9 @@ public class DriveFolderManager {
         SyncConfig config = SyncConfig.load();
         String savedId = config.simpleSyncFolderId;
 
-        if (savedId != null && !savedId.isEmpty()) {
-            if (isSafeDriveFileId(savedId)) {
-                try {
-                    HttpRequest.Builder req = api.authedRequest(
-                            "https://www.googleapis.com/drive/v3/files/" + savedId + "?fields=id,trashed",
-                            Duration.ofSeconds(15)).GET();
-                    HttpResponse<String> resp = api.send(req, 3);
-                    if (resp.statusCode() == 200) {
-                        JsonObject folder = JsonParser.parseString(resp.body()).getAsJsonObject();
-                        if (!folder.has("trashed") || !folder.get("trashed").getAsBoolean()) {
-                            simpleSyncFolderId = savedId;
-                            return simpleSyncFolderId;
-                        }
-                    } else if (resp.statusCode() == 404) {
-                        config.simpleSyncFolderId = null;
-                        config.save();
-                    }
-                } catch (IOException e) {
-                    if (e.getMessage() != null && e.getMessage().contains("404")) {
-                        config.simpleSyncFolderId = null;
-                        config.save();
-                    } else {
-                        throw e;
-                    }
-                }
-            } else {
-                config.simpleSyncFolderId = null;
-                config.save();
-            }
+        if (savedId != null && !savedId.isEmpty() && isSafeDriveFileId(savedId)) {
+            simpleSyncFolderId = savedId;
+            return simpleSyncFolderId;
         }
 
         // Search for existing folder
@@ -164,20 +138,8 @@ public class DriveFolderManager {
         SyncConfig config = SyncConfig.load();
         String cached = getter.apply(config);
         if (cached != null && isSafeDriveFileId(cached)) {
-            // Verify once per session that it still exists on Drive
-            try {
-                HttpRequest.Builder req = api.authedRequest(
-                        "https://www.googleapis.com/drive/v3/files/" + cached + "?fields=id,trashed",
-                        Duration.ofSeconds(15)).GET();
-                HttpResponse<String> resp = api.send(req, 2);
-                if (resp.statusCode() == 200) {
-                    JsonObject folder = JsonParser.parseString(resp.body()).getAsJsonObject();
-                    if (!folder.has("trashed") || !folder.get("trashed").getAsBoolean()) {
-                        validatedSubfolders.put(folderName, cached);
-                        return cached;
-                    }
-                }
-            } catch (Exception ignored) {}
+            validatedSubfolders.put(folderName, cached);
+            return cached;
         }
 
         String id = getOrCreateSubfolder(rootId, folderName);
@@ -185,6 +147,15 @@ public class DriveFolderManager {
         config.save();
         validatedSubfolders.put(folderName, id);
         return id;
+    }
+
+    public synchronized void invalidateSubfolder(String folderName) {
+        validatedSubfolders.remove(folderName);
+    }
+
+    public synchronized void invalidateRoot() {
+        this.simpleSyncFolderId = null;
+        validatedSubfolders.clear();
     }
 
     public String getWorldsFolderId() throws IOException {
@@ -248,9 +219,5 @@ public class DriveFolderManager {
 
     public static boolean isSafeDriveFileId(String fileId) {
         return fileId != null && DRIVE_FILE_ID_PATTERN.matcher(fileId).matches();
-    }
-
-    public void invalidateRoot() {
-        simpleSyncFolderId = null;
     }
 }

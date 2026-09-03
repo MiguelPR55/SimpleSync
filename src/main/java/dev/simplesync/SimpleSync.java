@@ -19,8 +19,13 @@ public class SimpleSync implements ModInitializer {
     @Override
     public void onInitialize() {
         SyncLogger.info("[SimpleSync] Initializing...");
-        dev.simplesync.sync.ZstdNativeLoader.ensureLoaded();
-        preloadClasses();
+        java.util.concurrent.CompletableFuture.runAsync(dev.simplesync.sync.ZstdNativeLoader::ensureLoaded);
+        java.util.concurrent.CompletableFuture.runAsync(SimpleSync::preloadClasses);
+
+        try {
+            Path savesDir = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("saves");
+            CloudSyncManager.getInstance().setSavesDirectory(savesDir);
+        } catch (Throwable ignored) {}
 
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             if (!server.isDedicatedServer()) {

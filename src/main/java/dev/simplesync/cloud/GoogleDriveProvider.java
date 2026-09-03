@@ -357,9 +357,8 @@ public class GoogleDriveProvider implements CloudProvider {
             long expectedSize = resp.headers().firstValueAsLong("Content-Length").orElse(meta.sizeBytes());
 
             try (InputStream is = new ProgressInputStream(resp.body(), meta.sizeBytes(), worldName, false);
-                 OutputStream os = new BufferedOutputStream(
-                         Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), 262144)) {
-                byte[] buffer = new byte[131072];
+                 OutputStream os = Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                byte[] buffer = new byte[262_144];
                 int n;
                 while ((n = is.read(buffer)) > 0) {
                     os.write(buffer, 0, n);

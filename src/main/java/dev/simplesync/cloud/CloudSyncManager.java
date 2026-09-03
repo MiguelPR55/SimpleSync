@@ -258,6 +258,15 @@ public class CloudSyncManager {
 
                     SyncConfig config = SyncConfig.load();
                     int downloadCount = 0;
+                    CompletableFuture<Void> extraFilesFuture = (config.syncSchematics || config.syncMasaConfigs)
+                            ? CompletableFuture.runAsync(() -> {
+                                try {
+                                    syncExtraFilesSync(false);
+                                } catch (Exception e) {
+                                    SyncLogger.error("[SimpleSync] Concurrent extra files sync error", e);
+                                }
+                            })
+                            : CompletableFuture.completedFuture(null);
 
                     if (cloudWorlds != null) {
                         for (WorldMetadata cw : cloudWorlds) {
@@ -297,7 +306,7 @@ public class CloudSyncManager {
                                 WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(localFolder);
                                 if (WorldSyncTask.isLocalWorldModified(localFolder, config, localName, stats)) {
                                     currentSyncingWorld = localName;
-                                    uploadWorldSync(localName, true);
+                                    uploadWorldSync(localName, true, stats);
                                 }
                             } catch (Exception e) {
                                 SyncLogger.error("[SimpleSync] Failed to process local-only world '{}'", localName, e);
@@ -312,8 +321,10 @@ public class CloudSyncManager {
                         }
                     }
 
-                    if (config.syncSchematics || config.syncMasaConfigs) {
-                        syncExtraFilesSync(false);
+                    try {
+                        extraFilesFuture.join();
+                    } catch (Exception e) {
+                        SyncLogger.warn("[SimpleSync] Extra files sync completed with error: {}", e.getMessage());
                     }
 
                     initialSyncCompleted = true;
@@ -362,18 +373,28 @@ public class CloudSyncManager {
         boolean localModified = isLocalDir && WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats);
 
         if (cw.lastModified() > (localTs + tolerance) || !isLocalDir) {
-            if (localModified) {
-                boolean useCloud = resolveConflict(worldName, stats, cw.lastModified());
-                if (!useCloud) {
-                    uploadWorldSync(worldName, isBatch);
-                    return false;
+            if (isLocalDir) {
+                if (localTs == 0) {
+                    // Untracked local world vs existing cloud world
+                    if (stats.latestModifiedTime() > cw.lastModified() + 2000L) {
+                        // Local world was modified more recently than cloud -> upload local
+                        uploadWorldSync(worldName, isBatch, stats);
+                        return false;
+                    }
+                    // Otherwise cloud version is prioritized (newer or equal) -> download from cloud
+                } else if (localModified) {
+                    boolean useCloud = resolveConflict(worldName, stats, cw.lastModified());
+                    if (!useCloud) {
+                        uploadWorldSync(worldName, isBatch, stats);
+                        return false;
+                    }
                 }
             }
 
             downloadAndExtract(cloud, worldName, worldFolder, config, cw.lastModified());
             return true;
         } else if (localModified) {
-            uploadWorldSync(worldName, isBatch);
+            uploadWorldSync(worldName, isBatch, stats);
         }
         return false;
     }
@@ -392,7 +413,7 @@ public class CloudSyncManager {
                 () -> resolution.complete(false));
 
         try {
-            return resolution.get(120, TimeUnit.SECONDS);
+            return resolution.get(30, TimeUnit.SECONDS);
         } catch (TimeoutException | ExecutionException e) {
             triggerConflictCancel();
             return false;
@@ -424,10 +445,14 @@ public class CloudSyncManager {
     }
 
     public void uploadWorldSync(String worldName) throws IOException {
-        uploadWorldSync(worldName, false);
+        uploadWorldSync(worldName, false, null);
     }
 
     public void uploadWorldSync(String worldName, boolean isBatch) throws IOException {
+        uploadWorldSync(worldName, isBatch, null);
+    }
+
+    public void uploadWorldSync(String worldName, boolean isBatch, WorldSyncTask.WorldStats existingStats) throws IOException {
         if (!WorldSyncTask.isWorldNameSafe(worldName)) {
             setStatus(SyncStatus.ERROR, "Invalid world name");
             return;
@@ -448,7 +473,7 @@ public class CloudSyncManager {
         pendingSyncWorlds.add(worldName);
 
         SyncConfig config = SyncConfig.load();
-        WorldSyncTask.WorldStats stats = WorldSyncTask.getWorldStats(worldFolder);
+        WorldSyncTask.WorldStats stats = existingStats != null ? existingStats : WorldSyncTask.getWorldStats(worldFolder);
         if (!WorldSyncTask.isLocalWorldModified(worldFolder, config, worldName, stats)) {
             markWorldSynchronized(worldName);
             if (!isBatch) setStatus(SyncStatus.DONE, "");

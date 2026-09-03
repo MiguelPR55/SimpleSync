@@ -19,7 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.concurrent.Flow;
 import java.util.concurrent.Flow.Subscriber;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -166,32 +169,7 @@ public class DriveApiClient {
 
                 final long curOffset = offset;
                 final long remaining = fileSize - curOffset;
-                final AtomicReference<InputStream> openStream = new AtomicReference<>();
-                Supplier<InputStream> supplier = () -> {
-                    InputStream prev = openStream.get();
-                    if (prev != null) {
-                        try { prev.close(); } catch (IOException ignored) {}
-                    }
-                    try {
-                        FileChannel channel = FileChannel.open(file, StandardOpenOption.READ);
-                        if (curOffset > 0) {
-                            channel.position(curOffset);
-                        }
-                        InputStream fis = Channels.newInputStream(channel);
-                        InputStream progressStream = trackProgress
-                                ? new ProgressInputStream(fis, fileSize, label, true, curOffset)
-                                : fis;
-                        InputStream bufferedStream = new BufferedInputStream(progressStream, 131_072);
-                        openStream.set(bufferedStream);
-                        return bufferedStream;
-                    } catch (IOException e) { throw new UncheckedIOException(e); }
-                };
-
-                var delegate = HttpRequest.BodyPublishers.ofInputStream(supplier);
-                HttpRequest.BodyPublisher bodyPub = new HttpRequest.BodyPublisher() {
-                    @Override public long contentLength() { return remaining; }
-                    @Override public void subscribe(Subscriber<? super ByteBuffer> s) { delegate.subscribe(s); }
-                };
+                HttpRequest.BodyPublisher bodyPub = createFilePublisher(file, curOffset, remaining, fileSize, label, trackProgress);
 
                 HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(sessionUrl))
                         .PUT(bodyPub).timeout(Duration.ofMinutes(15));
@@ -199,15 +177,7 @@ public class DriveApiClient {
                     reqBuilder.header("Content-Range", "bytes " + curOffset + "-" + (fileSize - 1) + "/" + fileSize);
                 }
 
-                HttpResponse<String> resp;
-                try {
-                    resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-                } finally {
-                    InputStream s = openStream.get();
-                    if (s != null) {
-                        try { s.close(); } catch (IOException ignored) {}
-                    }
-                }
+                HttpResponse<String> resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
                 if (resp.statusCode() == 200 || resp.statusCode() == 201) return resp;
                 if (resp.statusCode() == 308 && attempt < 3) continue;
                 if (resp.statusCode() >= 500 && attempt < 3) {
@@ -234,5 +204,106 @@ public class DriveApiClient {
             }
         }
         throw new IOException("Upload PUT failed after retries");
+    }
+
+    private static final int UPLOAD_CHUNK_SIZE = 262_144; // 256 KB chunks
+
+    static HttpRequest.BodyPublisher createFilePublisher(
+            Path file, long startOffset, long remaining, long totalFileSize, String label, boolean trackProgress) {
+        return new HttpRequest.BodyPublisher() {
+            @Override public long contentLength() { return remaining; }
+
+            @Override
+            public void subscribe(Subscriber<? super ByteBuffer> subscriber) {
+                try {
+                    FileChannel channel = FileChannel.open(file, StandardOpenOption.READ);
+                    if (startOffset > 0) {
+                        channel.position(startOffset);
+                    }
+                    subscriber.onSubscribe(new Flow.Subscription() {
+                        private final AtomicBoolean completed = new AtomicBoolean(false);
+                        private final AtomicLong requested = new AtomicLong(0);
+                        private final Object lock = new Object();
+                        private long totalRead = 0;
+                        private int lastPercent = -1;
+
+                        @Override
+                        public void request(long n) {
+                            if (n <= 0) {
+                                onError(new IllegalArgumentException("non-positive subscription request"));
+                                return;
+                            }
+                            requested.addAndGet(n);
+                            drain();
+                        }
+
+                        @Override
+                        public void cancel() {
+                            closeChannel();
+                        }
+
+                        private void drain() {
+                            synchronized (lock) {
+                                while (requested.get() > 0 && !completed.get()) {
+                                    if (totalRead >= remaining) {
+                                        onComplete();
+                                        return;
+                                    }
+                                    try {
+                                        int toRead = (int) Math.min(UPLOAD_CHUNK_SIZE, remaining - totalRead);
+                                        ByteBuffer buf = ByteBuffer.allocate(toRead);
+                                        int read = channel.read(buf);
+                                        if (read <= 0) {
+                                            onComplete();
+                                            return;
+                                        }
+                                        buf.flip();
+                                        totalRead += read;
+                                        if (trackProgress && totalFileSize > 0) {
+                                            long overall = startOffset + totalRead;
+                                            int pct = (int) ((overall * 100) / totalFileSize);
+                                            if (pct != lastPercent) {
+                                                lastPercent = pct;
+                                                dev.simplesync.cloud.CloudSyncManager.getInstance()
+                                                        .setStatus(dev.simplesync.sync.SyncStatus.UPLOADING, label + " (" + pct + "%)");
+                                            }
+                                        }
+                                        requested.decrementAndGet();
+                                        subscriber.onNext(buf);
+                                    } catch (Throwable t) {
+                                        onError(t);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+
+                        private void onComplete() {
+                            if (completed.compareAndSet(false, true)) {
+                                closeChannel();
+                                subscriber.onComplete();
+                            }
+                        }
+
+                        private void onError(Throwable t) {
+                            if (completed.compareAndSet(false, true)) {
+                                closeChannel();
+                                subscriber.onError(t);
+                            }
+                        }
+
+                        private void closeChannel() {
+                            try { channel.close(); } catch (Exception ignored) {}
+                        }
+                    });
+                } catch (Throwable t) {
+                    subscriber.onSubscribe(new Flow.Subscription() {
+                        @Override public void request(long n) {}
+                        @Override public void cancel() {}
+                    });
+                    subscriber.onError(t);
+                }
+            }
+        };
     }
 }

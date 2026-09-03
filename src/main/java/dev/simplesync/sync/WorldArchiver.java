@@ -111,6 +111,8 @@ public class WorldArchiver {
 
     private static void extractEntries(Path archiveFile, Path stagingDir, ArchiveFormat format) throws IOException {
         byte[] buffer = new byte[BUFFER_SIZE];
+        java.util.Set<Path> createdDirs = new java.util.HashSet<>();
+        createdDirs.add(stagingDir);
         try (InputStream fis = new BufferedInputStream(Files.newInputStream(archiveFile), BUFFER_SIZE);
              ArchiveEntryReader reader = createReader(fis, format)) {
 
@@ -129,11 +131,16 @@ public class WorldArchiver {
                 }
 
                 if (entry.isDirectory()) {
-                    Files.createDirectories(entryPath);
+                    if (createdDirs.add(entryPath)) {
+                        Files.createDirectories(entryPath);
+                    }
                 } else {
-                    if (entryPath.getParent() != null) Files.createDirectories(entryPath.getParent());
+                    Path parent = entryPath.getParent();
+                    if (parent != null && createdDirs.add(parent)) {
+                        Files.createDirectories(parent);
+                    }
                     if (Files.isSymbolicLink(entryPath)) Files.delete(entryPath);
-                    try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(entryPath), BUFFER_SIZE)) {
+                    try (OutputStream os = Files.newOutputStream(entryPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
                         totalExtracted = copyWithLimit(reader.currentStream(), os, buffer, totalExtracted);
                     }
                 }
@@ -253,7 +260,7 @@ public class WorldArchiver {
         ZstdNativeLoader.ensureLoaded();
         if (output.getParent() != null) Files.createDirectories(output.getParent());
         int workers = Math.min(6, Math.max(1, Runtime.getRuntime().availableProcessors()));
-        byte[] copyBuf = new byte[65536];
+        byte[] copyBuf = new byte[131_072];
 
         try (var fos = new BufferedOutputStream(Files.newOutputStream(output, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING), BUFFER_SIZE);
              var zos = new ZstdOutputStream(fos, ZSTD_COMPRESSION_LEVEL)) {
@@ -320,11 +327,17 @@ public class WorldArchiver {
         });
     }
 
+    private static final boolean IS_WINDOWS = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+
     private static void deleteWithRetry(Path path) throws IOException {
-        try { Files.setAttribute(path, "dos:readonly", false); } catch (Exception ignored) {}
         for (int i = 0; i < 3; i++) {
-            try { Files.deleteIfExists(path); return; }
-            catch (IOException e) {
+            try {
+                Files.deleteIfExists(path);
+                return;
+            } catch (IOException e) {
+                if (IS_WINDOWS && i == 0) {
+                    try { Files.setAttribute(path, "dos:readonly", false); } catch (Exception ignored) {}
+                }
                 if (i == 2) throw e;
                 try { Thread.sleep(50); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); throw e; }
             }
