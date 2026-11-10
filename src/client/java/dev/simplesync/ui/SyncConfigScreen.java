@@ -347,7 +347,7 @@ public class SyncConfigScreen extends Screen {
                 DesktopUtil.openUrl(url);
             }
             Minecraft.getInstance().gui.setScreen(parent);
-        }, url, true));
+        }, java.net.URI.create(url), true));
     }
 
     @Override

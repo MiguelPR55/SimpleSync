@@ -17,9 +17,9 @@
 ## Getting Started
 
 1. **Requirements**:
-   - **Minecraft**: `26.2`
+   - **Minecraft**: `26.3`
    - **Fabric Loader**: `0.19.3` or higher
-   - **Fabric API**: `0.154.0+26.2` or higher
+   - **Fabric API**: `0.166.0+26.3` or higher
 
 2. **Installation**:
    - Download the SimpleSync mod `.jar` file and place it inside your `.minecraft/mods` folder.

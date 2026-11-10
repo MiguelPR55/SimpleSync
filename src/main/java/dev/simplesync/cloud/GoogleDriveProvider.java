@@ -20,6 +20,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -33,6 +34,7 @@ public class GoogleDriveProvider implements CloudProvider {
     private static final String TAR_ZST_MIME = "application/zstd";
 
     private final Path credentialsDir;
+    private final ExecutorService httpExecutor;
     private final HttpClient httpClient;
     private final DriveTokenManager tokenManager;
     private final DriveApiClient api;
@@ -44,15 +46,16 @@ public class GoogleDriveProvider implements CloudProvider {
 
     public GoogleDriveProvider() {
         this.credentialsDir = SyncConfig.getConfigDir().resolve("credentials");
+        this.httpExecutor = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "SimpleSync-HTTP");
+            t.setDaemon(true);
+            return t;
+        });
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(15))
-                .executor(Executors.newFixedThreadPool(4, r -> {
-                    Thread t = new Thread(r, "SimpleSync-HTTP");
-                    t.setDaemon(true);
-                    return t;
-                }))
+                .executor(httpExecutor)
                 .build();
 
         this.tokenManager = new DriveTokenManager(httpClient);
@@ -456,6 +459,11 @@ public class GoogleDriveProvider implements CloudProvider {
         try {
             if (syncEngine != null) {
                 syncEngine.shutdown();
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (httpExecutor != null) {
+                httpExecutor.shutdownNow();
             }
         } catch (Exception ignored) {}
     }

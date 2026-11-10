@@ -118,11 +118,15 @@ public final class ZstdNativeLoader {
             }
 
             Path tempFile = targetPath.resolveSibling(targetPath.getFileName() + ".tmp");
-            Files.write(tempFile, nativeBytes);
             try {
-                Files.move(tempFile, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException e) {
-                Files.move(tempFile, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                Files.write(tempFile, nativeBytes);
+                try {
+                    Files.move(tempFile, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    Files.move(tempFile, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             }
 
             System.load(targetPath.toAbsolutePath().toString());

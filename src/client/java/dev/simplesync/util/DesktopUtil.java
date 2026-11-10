@@ -43,7 +43,7 @@ public final class DesktopUtil {
 
         // 1. Standard Minecraft platform opener (handles Windows, macOS, Linux natively)
         try {
-            net.minecraft.util.Util.getPlatform().openUri(uri);
+            com.mojang.blaze3d.Blaze3D.openUri(uri);
             return true;
         } catch (Throwable ignored) {}
 
@@ -73,7 +73,7 @@ public final class DesktopUtil {
 
         // 1. Standard Minecraft platform opener
         try {
-            net.minecraft.util.Util.getPlatform().openFile(file);
+            com.mojang.blaze3d.Blaze3D.openPath(file.toPath());
             return true;
         } catch (Throwable ignored) {}
 
