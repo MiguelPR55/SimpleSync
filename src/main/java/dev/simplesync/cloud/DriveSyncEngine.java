@@ -91,10 +91,9 @@ public class DriveSyncEngine {
             for (FolderSyncTask.LocalFileInfo local : plan.toUpload()) {
                 futures.add(CompletableFuture.runAsync(() -> {
                     try {
-                        uploadSingleFile(rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFileIdMap);
-                        long now = System.currentTimeMillis();
+                        long remoteTs = uploadSingleFile(rootRemoteFolderId, localBaseDir, local, folderPathToIdMap, remoteFileIdMap);
                         synchronized (config) {
-                            config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(now, local.size(), local.lastModified()));
+                            config.setFileTracking(local.relativePath(), new SyncConfig.FileTrackingInfo(remoteTs, local.size(), local.lastModified()));
                         }
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
@@ -105,11 +104,11 @@ public class DriveSyncEngine {
             for (FolderSyncTask.RemoteFileInfo remote : plan.toDownload()) {
                 futures.add(CompletableFuture.runAsync(() -> {
                     try {
-                        downloadSingleFile(localBaseDir, remote);
+                        long actualSize = downloadSingleFile(localBaseDir, remote);
                         long now = System.currentTimeMillis();
                         long localMtime = remote.lastModified() > 0 ? remote.lastModified() : now;
                         synchronized (config) {
-                            config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, remote.size(), localMtime));
+                            config.setFileTracking(remote.relativePath(), new SyncConfig.FileTrackingInfo(localMtime, actualSize, localMtime));
                         }
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
@@ -145,7 +144,7 @@ public class DriveSyncEngine {
 
     // ─── Upload / Download Single File ────────────────────────────────────
 
-    private void uploadSingleFile(String rootFolderId, Path localBaseDir,
+    private long uploadSingleFile(String rootFolderId, Path localBaseDir,
                                   FolderSyncTask.LocalFileInfo local,
                                   Map<String, String> folderMap,
                                   Map<String, String> remoteFileIdMap) throws IOException {
@@ -170,7 +169,7 @@ public class DriveSyncEngine {
         }
 
         if (existingFileId != null) {
-            String url = "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=media";
+            String url = "https://www.googleapis.com/upload/drive/v3/files/" + existingFileId + "?uploadType=media&fields=id,modifiedTime";
             HttpRequest.BodyPublisher bodyPublisher = customBytes != null
                     ? HttpRequest.BodyPublishers.ofByteArray(customBytes)
                     : HttpRequest.BodyPublishers.ofFile(local.fullPath());
@@ -180,7 +179,7 @@ public class DriveSyncEngine {
                     .header("Content-Type", "application/octet-stream");
             HttpResponse<String> resp = api.send(req, 3);
             if (resp.statusCode() == 200) {
-                return;
+                return extractModifiedTimeOrDefault(resp.body(), local.lastModified());
             } else if (resp.statusCode() == 404) {
                 remoteFileIdMap.remove(relPath);
                 // Fall through to create as new file below
@@ -227,6 +226,7 @@ public class DriveSyncEngine {
                 if (putResp.statusCode() != 200 && putResp.statusCode() != 201) {
                     throw new IOException("Failed to upload new file " + relPath + ": HTTP " + putResp.statusCode());
                 }
+                return extractModifiedTimeOrDefault(putResp.body(), local.lastModified());
             } else {
                 byte[] fileBytes = customBytes != null ? customBytes : Files.readAllBytes(local.fullPath());
                 String boundary = "SimpleSyncBoundary" + System.currentTimeMillis();
@@ -240,7 +240,7 @@ public class DriveSyncEngine {
                 byte[] bodyBytes = DriveApiClient.buildMultipartBody(boundary, meta.toString(), fileBytes);
 
                 HttpRequest.Builder req = api.authedRequest(
-                        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", Duration.ofSeconds(60))
+                        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime", Duration.ofSeconds(60))
                         .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
                         .header("Content-Type", "multipart/related; boundary=" + boundary);
 
@@ -248,11 +248,25 @@ public class DriveSyncEngine {
                 if (resp.statusCode() != 200 && resp.statusCode() != 201) {
                     throw new IOException("Failed to upload new file " + relPath + ": HTTP " + resp.statusCode());
                 }
+                return extractModifiedTimeOrDefault(resp.body(), local.lastModified());
             }
         }
     }
 
-    private void downloadSingleFile(Path localBaseDir, FolderSyncTask.RemoteFileInfo remote) throws IOException {
+    private static long extractModifiedTimeOrDefault(String jsonBody, long localFallback) {
+        long parsed = System.currentTimeMillis();
+        if (jsonBody != null && !jsonBody.isBlank()) {
+            try {
+                JsonObject obj = JsonParser.parseString(jsonBody).getAsJsonObject();
+                if (obj.has("modifiedTime")) {
+                    parsed = Instant.parse(obj.get("modifiedTime").getAsString()).toEpochMilli();
+                }
+            } catch (Exception ignored) {}
+        }
+        return Math.max(parsed, localFallback);
+    }
+
+    private long downloadSingleFile(Path localBaseDir, FolderSyncTask.RemoteFileInfo remote) throws IOException {
         Path targetFile = localBaseDir.resolve(remote.relativePath()).normalize();
         if (!targetFile.startsWith(localBaseDir.normalize())) {
             throw new SecurityException("Path traversal detected: " + remote.relativePath());
@@ -283,20 +297,20 @@ public class DriveSyncEngine {
             throw e;
         }
 
-        if (expectedSize > 0 && !LitematicaPathNormalizer.isLitematicaConfigFile(remote.relativePath())) {
-            long actualSize = Files.size(tempFile);
-            if (actualSize != expectedSize) {
-                Files.deleteIfExists(tempFile);
-                throw new IOException("Download size mismatch for " + remote.relativePath() + ": expected " + expectedSize + " bytes, got " + actualSize + " bytes");
-            }
+        long downloadedSize = Files.size(tempFile);
+        if (expectedSize > 0 && downloadedSize != expectedSize) {
+            Files.deleteIfExists(tempFile);
+            throw new IOException("Download size mismatch for " + remote.relativePath() + ": expected " + expectedSize + " bytes, got " + downloadedSize + " bytes");
         }
 
+        long finalLocalSize = downloadedSize;
         if (LitematicaPathNormalizer.isLitematicaConfigFile(remote.relativePath())) {
             try {
                 Path schematicsDir = localBaseDir.resolve("schematics");
                 String rawJson = Files.readString(tempFile);
                 String localJson = LitematicaPathNormalizer.toLocalJson(rawJson, schematicsDir, localBaseDir);
                 Files.writeString(tempFile, localJson, StandardOpenOption.TRUNCATE_EXISTING);
+                finalLocalSize = Files.size(tempFile);
             } catch (Exception e) {
                 SyncLogger.warn("[SimpleSync] Failed to localize downloaded Litematica config {}: {}", remote.relativePath(), e.getMessage());
             }
@@ -312,6 +326,7 @@ public class DriveSyncEngine {
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(tempFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
         }
+        return finalLocalSize;
     }
 
     // ─── Remote Listing ───────────────────────────────────────────────────

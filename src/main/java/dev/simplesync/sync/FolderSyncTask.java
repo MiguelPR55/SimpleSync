@@ -154,7 +154,9 @@ public class FolderSyncTask {
                         // Prioritize cloud version to protect remote user configs!
                         toDownload.add(remote);
                     } else {
-                        boolean localModifiedAfterSync = local.lastModified() > lastSync + TIMESTAMP_TOLERANCE_MS;
+                        long lastLocalMtime = tracking.lastLocalMtime() > 0 ? tracking.lastLocalMtime() : lastSync;
+                        boolean localModifiedAfterSync = (local.lastModified() > lastLocalMtime + TIMESTAMP_TOLERANCE_MS)
+                                || (tracking.lastLocalSize() > 0 && local.size() != tracking.lastLocalSize());
                         boolean remoteModifiedAfterSync = remote.lastModified() > lastSync + TIMESTAMP_TOLERANCE_MS;
 
                         if (localModifiedAfterSync && !remoteModifiedAfterSync) {
@@ -165,7 +167,7 @@ public class FolderSyncTask {
                             // Both modified after sync -> pick newer
                             if (local.lastModified() > remote.lastModified() + TIMESTAMP_TOLERANCE_MS) {
                                 toUpload.add(local);
-                            } else if (remote.lastModified() > local.lastModified() + TIMESTAMP_TOLERANCE_MS) {
+                            } else {
                                 toDownload.add(remote);
                             }
                         }

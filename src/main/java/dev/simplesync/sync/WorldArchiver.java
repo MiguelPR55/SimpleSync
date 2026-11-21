@@ -134,14 +134,22 @@ public class WorldArchiver {
                     if (createdDirs.add(entryPath)) {
                         Files.createDirectories(entryPath);
                     }
+                    if (entry.modTime() > 0) {
+                        try { Files.setLastModifiedTime(entryPath, java.nio.file.attribute.FileTime.fromMillis(entry.modTime())); } catch (IOException ignored) {}
+                    }
                 } else {
                     Path parent = entryPath.getParent();
                     if (parent != null && createdDirs.add(parent)) {
                         Files.createDirectories(parent);
                     }
                     if (Files.isSymbolicLink(entryPath)) Files.delete(entryPath);
-                    try (OutputStream os = Files.newOutputStream(entryPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                    try (OutputStream os = new BufferedOutputStream(
+                            Files.newOutputStream(entryPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE),
+                            BUFFER_SIZE)) {
                         totalExtracted = copyWithLimit(reader.currentStream(), os, buffer, totalExtracted);
+                    }
+                    if (entry.modTime() > 0) {
+                        try { Files.setLastModifiedTime(entryPath, java.nio.file.attribute.FileTime.fromMillis(entry.modTime())); } catch (IOException ignored) {}
                     }
                 }
             }
@@ -151,7 +159,7 @@ public class WorldArchiver {
 
     // ─── Archive Reader Abstraction ───────────────────────────────────────
 
-    record ArchiveEntryInfo(String name, boolean isDirectory) {}
+    record ArchiveEntryInfo(String name, boolean isDirectory, long modTime) {}
 
     interface ArchiveEntryReader extends Closeable {
         ArchiveEntryInfo nextEntry() throws IOException;
@@ -166,7 +174,7 @@ public class WorldArchiver {
                 @Override public ArchiveEntryInfo nextEntry() throws IOException {
                     current = zis.getNextEntry();
                     if (current == null) return null;
-                    return new ArchiveEntryInfo(current.getName(), current.isDirectory());
+                    return new ArchiveEntryInfo(current.getName(), current.isDirectory(), current.getTime());
                 }
                 @Override public InputStream currentStream() { return zis; }
                 @Override public void close() throws IOException { zis.close(); }
@@ -179,7 +187,7 @@ public class WorldArchiver {
                 @Override public ArchiveEntryInfo nextEntry() throws IOException {
                     TarArchiveEntry entry = (TarArchiveEntry) tis.getNextEntry();
                     if (entry == null) return null;
-                    return new ArchiveEntryInfo(entry.getName(), entry.isDirectory());
+                    return new ArchiveEntryInfo(entry.getName(), entry.isDirectory(), entry.getModTime().getTime());
                 }
                 @Override public InputStream currentStream() { return tis; }
                 @Override public void close() throws IOException { tis.close(); }
@@ -190,38 +198,55 @@ public class WorldArchiver {
     // ─── Compression ──────────────────────────────────────────────────────
  
     @FunctionalInterface
-    private interface EntryConsumer { void accept(Path path, String entryName, BasicFileAttributes attrs) throws IOException; }
+    public interface EntryConsumer { void accept(Path path, String entryName, BasicFileAttributes attrs) throws IOException; }
 
-    private static WorldSyncTask.WorldStats walkWorld(Path worldFolder, EntryConsumer fileConsumer, EntryConsumer dirConsumer) throws IOException {
+    public static boolean isExcludedWorldFile(String lowerFileName) {
+        if (lowerFileName.equals("session.lock") || lowerFileName.equals("session.lock.backup")
+                || lowerFileName.equals("level.dat_old") || lowerFileName.equals("uid.dat")) {
+            return true;
+        }
+        return lowerFileName.endsWith(".tmp") || lowerFileName.endsWith(".lock")
+                || lowerFileName.endsWith(".part") || lowerFileName.endsWith(".syncing")
+                || lowerFileName.endsWith(".download") || lowerFileName.endsWith(".staging");
+    }
+
+    public static boolean isExcludedWorldDirectory(String dirName) {
+        return dirName.endsWith(SUFFIX_STAGING) || dirName.endsWith(SUFFIX_BACKUP);
+    }
+
+    public static WorldSyncTask.WorldStats walkWorld(Path worldFolder, EntryConsumer fileConsumer, EntryConsumer dirConsumer) throws IOException {
         final long[] stats = {0, 0};
         Files.walkFileTree(worldFolder, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                if (Files.isSymbolicLink(file) || !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.CONTINUE;
+                if (Files.isSymbolicLink(file) || !attrs.isRegularFile()) return FileVisitResult.CONTINUE;
                 String name = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-                if (name.equals("session.lock") || name.equals("session.lock.backup") || name.equals("level.dat_old") || name.equals("uid.dat")) return FileVisitResult.CONTINUE;
-                if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".part") || name.endsWith(".syncing") || name.endsWith(".download") || name.endsWith(".staging")) return FileVisitResult.CONTINUE;
+                if (isExcludedWorldFile(name)) return FileVisitResult.CONTINUE;
 
                 stats[0] += attrs.size();
                 long mtime = attrs.lastModifiedTime().toMillis();
                 if (mtime > stats[1]) stats[1] = mtime;
 
-                fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'), attrs);
+                if (fileConsumer != null) {
+                    fileConsumer.accept(file, worldFolder.relativize(file).toString().replace('\\', '/'), attrs);
+                }
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                if (Files.isSymbolicLink(dir) || !Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) return FileVisitResult.SKIP_SUBTREE;
+                if (Files.isSymbolicLink(dir)) return FileVisitResult.SKIP_SUBTREE;
                 String dirName = dir.getFileName().toString();
-                if (dirName.endsWith(SUFFIX_STAGING) || dirName.endsWith(SUFFIX_BACKUP)) return FileVisitResult.SKIP_SUBTREE;
+                if (isExcludedWorldDirectory(dirName)) return FileVisitResult.SKIP_SUBTREE;
 
                 long mtime = attrs.lastModifiedTime().toMillis();
                 if (mtime > stats[1]) stats[1] = mtime;
 
-                String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
-                if (!entryName.isEmpty()) dirConsumer.accept(dir, entryName, attrs);
+                if (dirConsumer != null) {
+                    String entryName = worldFolder.relativize(dir).toString().replace('\\', '/');
+                    if (!entryName.isEmpty()) dirConsumer.accept(dir, entryName, attrs);
+                }
                 return FileVisitResult.CONTINUE;
             }
             @Override public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                SyncLogger.warn("[SimpleSync] Skipping unreadable file during compression: {} ({})", file, exc != null ? exc.getMessage() : "unknown");
+                SyncLogger.warn("[SimpleSync] Skipping unreadable file during world walk: {} ({})", file, exc != null ? exc.getMessage() : "unknown");
                 return FileVisitResult.CONTINUE;
             }
         });

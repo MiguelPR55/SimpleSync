@@ -26,6 +26,7 @@ public class TitleScreenMixin {
         if (pendingConflict != null) {
             net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
             if (client != null && client.gui != null) {
+                pendingConflict.setParentIfNull((net.minecraft.client.gui.screens.Screen) (Object) this);
                 client.gui.setScreen(pendingConflict);
                 return;
             }

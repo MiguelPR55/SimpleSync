@@ -342,12 +342,20 @@ public class SyncConfigScreen extends Screen {
     }
 
     public static void confirmAndOpenUrl(Screen parent, String url) {
+        if (url == null || url.isBlank()) return;
+        java.net.URI uri;
+        try {
+            uri = java.net.URI.create(url);
+        } catch (IllegalArgumentException e) {
+            SyncLogger.error("[SimpleSync] Invalid URL: {}", url, e);
+            return;
+        }
         Minecraft.getInstance().gui.setScreen(new ConfirmLinkScreen(confirmed -> {
             if (confirmed) {
                 DesktopUtil.openUrl(url);
             }
             Minecraft.getInstance().gui.setScreen(parent);
-        }, java.net.URI.create(url), true));
+        }, uri, true));
     }
 
     @Override

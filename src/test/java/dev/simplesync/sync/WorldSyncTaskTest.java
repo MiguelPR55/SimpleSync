@@ -72,6 +72,40 @@ public class WorldSyncTaskTest {
     }
 
     @Test
+    void testGetWorldStats_MatchesCompressWorldStatsWithIgnoredFiles() throws IOException {
+        Files.writeString(worldFolder.resolve("level.dat"), "valid level data");
+        Files.writeString(worldFolder.resolve("session.lock"), "ephemeral lock");
+        Files.writeString(worldFolder.resolve("level.dat_old"), "ephemeral backup");
+        Files.writeString(worldFolder.resolve("temp.tmp"), "temp data");
+
+        Path archive = tempDir.resolve("stats_test.tar.zst");
+        WorldSyncTask.WorldStats compressedStats = WorldSyncTask.compressWorld(worldFolder, archive);
+        WorldSyncTask.WorldStats scannedStats = WorldSyncTask.getWorldStats(worldFolder);
+
+        assertEquals(compressedStats.size(), scannedStats.size(),
+                "getWorldStats must exclude ephemeral files identically to compressWorld");
+        assertEquals(compressedStats.latestModifiedTime(), scannedStats.latestModifiedTime(),
+                "getWorldStats mtime must match compressWorld mtime");
+    }
+
+    @Test
+    void testExtractWorld_PreservesFileTimestamps() throws IOException {
+        Path file = worldFolder.resolve("level.dat");
+        Files.writeString(file, "timestamp preservation payload");
+        long fixedMtime = 1700000000000L; // Fixed historical timestamp
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(fixedMtime));
+
+        Path archive = tempDir.resolve("mtime_test.tar.zst");
+        WorldSyncTask.compressWorld(worldFolder, archive);
+
+        Path extractedDir = tempDir.resolve("ExtractedMtimeWorld");
+        WorldSyncTask.extractWorld(archive, extractedDir);
+
+        long extractedMtime = Files.getLastModifiedTime(extractedDir.resolve("level.dat")).toMillis();
+        assertEquals(fixedMtime, extractedMtime, "Extracted file must preserve original modification timestamp from archive");
+    }
+
+    @Test
     void testExtractWorld_ZipSlipProtection() throws IOException {
         Path maliciousZip = tempDir.resolve("malicious.zip");
         try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(maliciousZip.toFile()))) {

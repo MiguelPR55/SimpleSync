@@ -97,7 +97,7 @@ public class GoogleDriveProvider implements CloudProvider {
                 throw new IOException("client_secret.json is missing!");
             }
             var details = secrets.getDetails();
-            new DeviceCodeAuthenticator().authenticate(
+            new DeviceCodeAuthenticator(httpClient).authenticate(
                     details.client_id, details.client_secret,
                     "https://www.googleapis.com/auth/drive.file",
                     CloudSyncManager.getInstance().getAuthPromptCallback());
@@ -138,7 +138,7 @@ public class GoogleDriveProvider implements CloudProvider {
 
         do {
             String url = "https://www.googleapis.com/drive/v3/files?q=" + RetryUtil.urlEncode(query)
-                    + "&fields=nextPageToken,files(id,name,parents,modifiedTime,size)&pageSize=1000&orderBy=modifiedTime%20desc"
+                    + "&fields=nextPageToken,files(id,name,mimeType,parents,modifiedTime,size)&pageSize=1000&orderBy=modifiedTime%20desc"
                     + (pageToken != null ? "&pageToken=" + RetryUtil.urlEncode(pageToken) : "");
 
             HttpRequest.Builder req = api.authedRequest(url, Duration.ofSeconds(30)).GET();
@@ -360,7 +360,9 @@ public class GoogleDriveProvider implements CloudProvider {
             long expectedSize = resp.headers().firstValueAsLong("Content-Length").orElse(meta.sizeBytes());
 
             try (InputStream is = new ProgressInputStream(resp.body(), meta.sizeBytes(), worldName, false);
-                 OutputStream os = Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                 OutputStream os = new BufferedOutputStream(
+                         Files.newOutputStream(outputArchive, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
+                         262_144)) {
                 byte[] buffer = new byte[262_144];
                 int n;
                 while ((n = is.read(buffer)) > 0) {
@@ -462,6 +464,9 @@ public class GoogleDriveProvider implements CloudProvider {
             }
         } catch (Exception ignored) {}
         try {
+            if (httpClient != null) {
+                httpClient.close();
+            }
             if (httpExecutor != null) {
                 httpExecutor.shutdownNow();
             }

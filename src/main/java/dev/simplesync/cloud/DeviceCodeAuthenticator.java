@@ -22,9 +22,15 @@ public class DeviceCodeAuthenticator {
     private static final String DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code";
     private static final String TOKEN_URL = "https://oauth2.googleapis.com/token";
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
+    private final HttpClient httpClient;
+
+    public DeviceCodeAuthenticator() {
+        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build());
+    }
+
+    public DeviceCodeAuthenticator(HttpClient httpClient) {
+        this.httpClient = httpClient != null ? httpClient : HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
+    }
 
     /**
      * Executes the device authorization grant flow.

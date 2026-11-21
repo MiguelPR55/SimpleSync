@@ -81,6 +81,7 @@ public class SyncConfig {
 
     public static void setConfigDir(Path dir) {
         configDir = dir;
+        dev.simplesync.cloud.TokenStore.invalidateCache();
     }
 
     /**

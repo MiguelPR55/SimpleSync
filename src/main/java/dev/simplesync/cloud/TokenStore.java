@@ -16,6 +16,8 @@ public class TokenStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String TOKENS_FILE = "tokens.json";
     private static final Object FILE_LOCK = new Object();
+    private static volatile TokenData cachedTokenData;
+    private static volatile long cachedTokenMtime = -1L;
 
     public static class TokenData {
         public String accessToken;
@@ -50,6 +52,12 @@ public class TokenStore {
                 Files.move(tempFile, tokensFile, StandardCopyOption.REPLACE_EXISTING);
             }
             trySetPermissions(tokensFile, "rw-------");
+            cachedTokenData = data;
+            try {
+                cachedTokenMtime = Files.getLastModifiedTime(tokensFile).toMillis();
+            } catch (IOException ignored) {
+                cachedTokenMtime = System.currentTimeMillis();
+            }
         }
     }
 
@@ -63,11 +71,20 @@ public class TokenStore {
         synchronized (FILE_LOCK) {
             Path tokensFile = getCredentialsDir().resolve(TOKENS_FILE);
             if (!Files.exists(tokensFile) || !Files.isRegularFile(tokensFile)) {
+                cachedTokenData = null;
+                cachedTokenMtime = -1L;
                 return null;
             }
             try {
+                long mtime = Files.getLastModifiedTime(tokensFile).toMillis();
+                if (cachedTokenData != null && mtime == cachedTokenMtime) {
+                    return cachedTokenData;
+                }
                 String json = Files.readString(tokensFile);
-                return GSON.fromJson(json, TokenData.class);
+                TokenData parsed = GSON.fromJson(json, TokenData.class);
+                cachedTokenData = parsed;
+                cachedTokenMtime = mtime;
+                return parsed;
             } catch (Exception e) {
                 SyncLogger.error("[SimpleSync] Failed to load stored tokens", e);
                 return null;
@@ -75,8 +92,17 @@ public class TokenStore {
         }
     }
 
+    public static void invalidateCache() {
+        synchronized (FILE_LOCK) {
+            cachedTokenData = null;
+            cachedTokenMtime = -1L;
+        }
+    }
+
     public static void clear() throws IOException {
         synchronized (FILE_LOCK) {
+            cachedTokenData = null;
+            cachedTokenMtime = -1L;
             Path tokensFile = getCredentialsDir().resolve(TOKENS_FILE);
             Files.deleteIfExists(tokensFile);
         }

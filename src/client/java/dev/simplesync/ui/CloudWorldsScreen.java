@@ -236,8 +236,9 @@ public class CloudWorldsScreen extends Screen {
             // Draw world name
             extractor.text(this.font, meta.worldName(), 20, rowY + 2, 0xFFFFFFFF);
 
-            // Draw status / date
+            // Draw status / date / size
             String dateStr = meta.lastModified() > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(meta.lastModified())) : "";
+            String sizeStr = formatFileSize(meta.sizeBytes());
             Component statusComp;
             int statusColor;
             if (isInstalled) {
@@ -251,8 +252,14 @@ public class CloudWorldsScreen extends Screen {
                 statusColor = 0xFFAAAAAA; // Gray
             }
 
-            String infoText = statusComp.getString() + (dateStr.isEmpty() ? "" : " - " + dateStr);
-            extractor.text(this.font, infoText, 20, rowY + 13, statusColor);
+            StringBuilder infoBuilder = new StringBuilder(statusComp.getString());
+            if (!sizeStr.isEmpty()) {
+                infoBuilder.append(" - ").append(sizeStr);
+            }
+            if (!dateStr.isEmpty()) {
+                infoBuilder.append(" - ").append(dateStr);
+            }
+            extractor.text(this.font, infoBuilder.toString(), 20, rowY + 13, statusColor);
         }
 
         // Draw page indicator
@@ -261,6 +268,14 @@ public class CloudWorldsScreen extends Screen {
             String pageStr = (this.currentPage + 1) + " / " + totalPages;
             extractor.centeredText(this.font, Component.literal(pageStr), this.width / 2, this.height - 45, 0xFFAAAAAA);
         }
+    }
+
+    private static String formatFileSize(long bytes) {
+        if (bytes <= 0) return "";
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(java.util.Locale.ROOT, "%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024L * 1024L) return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format(java.util.Locale.ROOT, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
     }
 
     @Override

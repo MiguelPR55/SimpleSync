@@ -128,4 +128,19 @@ public class FolderSyncTaskTest {
         assertEquals(1, plan.toDeleteLocally().size());
         assertEquals("old_schematic.litematic", plan.toDeleteLocally().get(0).relativePath());
     }
+
+    @Test
+    public void testCreateSyncPlanDetectsLocalSizeChangeEvenWithinMtimeTolerance() {
+        // Simulates fast edit within 1 second where size changes from 100 to 150 bytes
+        FolderSyncTask.LocalFileInfo localFile = new FolderSyncTask.LocalFileInfo("config/tweakeroo.json", tempDir.resolve("config/tweakeroo.json"), 5500L, 150L);
+        FolderSyncTask.RemoteFileInfo remoteFile = new FolderSyncTask.RemoteFileInfo("config/tweakeroo.json", "id_tw", 5000L, 100L);
+
+        dev.simplesync.config.SyncConfig.FileTrackingInfo tracked = new dev.simplesync.config.SyncConfig.FileTrackingInfo(5000L, 100L, 5000L);
+        Map<String, dev.simplesync.config.SyncConfig.FileTrackingInfo> trackingMap = Map.of("config/tweakeroo.json", tracked);
+
+        FolderSyncTask.SyncPlan plan = FolderSyncTask.createSyncPlan(List.of(localFile), List.of(remoteFile), trackingMap);
+
+        assertEquals(1, plan.toUpload().size(), "Modified local file with different size must be queued for upload");
+        assertEquals(0, plan.toDownload().size());
+    }
 }

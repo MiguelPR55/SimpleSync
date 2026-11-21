@@ -21,6 +21,7 @@ public class SyncConflictScreen extends Screen {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault());
 
+    private Screen parent;
     private final String worldName;
     private final Runnable onUseCloud;
     private final Runnable onKeepLocal;
@@ -30,7 +31,13 @@ public class SyncConflictScreen extends Screen {
 
     public SyncConflictScreen(String worldName, long localTimestamp, long cloudTimestamp,
                               Runnable onUseCloud, Runnable onKeepLocal) {
+        this(null, worldName, localTimestamp, cloudTimestamp, onUseCloud, onKeepLocal);
+    }
+
+    public SyncConflictScreen(Screen parent, String worldName, long localTimestamp, long cloudTimestamp,
+                              Runnable onUseCloud, Runnable onKeepLocal) {
         super(Component.translatable("simplesync.conflict.title"));
+        this.parent = parent;
         this.worldName = worldName;
         this.onUseCloud = onUseCloud;
         this.onKeepLocal = onKeepLocal;
@@ -38,6 +45,12 @@ public class SyncConflictScreen extends Screen {
         String unknownText = Component.translatable("simplesync.conflict.unknown").getString();
         this.formattedLocalDate = localTimestamp > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(localTimestamp)) : unknownText;
         this.formattedCloudDate = cloudTimestamp > 0 ? DATE_FORMATTER.format(Instant.ofEpochMilli(cloudTimestamp)) : unknownText;
+    }
+
+    public void setParentIfNull(Screen fallbackParent) {
+        if (this.parent == null) {
+            this.parent = fallbackParent;
+        }
     }
 
     @Override
@@ -114,6 +127,14 @@ public class SyncConflictScreen extends Screen {
         if (resolved.compareAndSet(false, true)) {
             onKeepLocal.run();
         }
-        super.onClose();
+        if (this.minecraft != null && this.minecraft.gui != null) {
+            if (this.parent instanceof ReloadableScreen reloadable) {
+                reloadable.reloadAndReturn();
+            } else {
+                this.minecraft.gui.setScreen(this.parent);
+            }
+        } else {
+            super.onClose();
+        }
     }
 }

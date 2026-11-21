@@ -58,8 +58,9 @@ public class SimpleSyncClient implements ClientModInitializer {
             Minecraft client = Minecraft.getInstance();
             if (client == null) return;
             client.execute(() -> {
+                net.minecraft.client.gui.screens.Screen currentScreen = client.gui != null ? client.gui.screen() : null;
                 SyncConflictScreen conflictScreen = new SyncConflictScreen(
-                        worldName, localTs, cloudTs,
+                        currentScreen, worldName, localTs, cloudTs,
                         () -> {
                             pendingConflictScreen = null;
                             onUseCloud.run();

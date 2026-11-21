@@ -35,7 +35,7 @@ public final class DesktopUtil {
     }
 
     /**
-     * Opens a URI using Minecraft's built-in platform utility, with Flatpak/Linux and AWT fallbacks.
+     * Opens a URI using OS native commands, with Java AWT Desktop fallback.
      */
     public static boolean openUri(URI uri) {
         if (uri == null) return false;
@@ -47,12 +47,11 @@ public final class DesktopUtil {
             return true;
         } catch (Throwable ignored) {}
 
-        // 2. Linux / Flatpak / Steam Deck fallback
-        if (openLinuxFallback(uri.toString())) {
+        // 2. OS native fallback
+        if (openOsFallback(uri.toString())) {
             return true;
         }
 
-        // 3. Java AWT Desktop fallback
         try {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                 Desktop.getDesktop().browse(uri);
@@ -65,7 +64,7 @@ public final class DesktopUtil {
     }
 
     /**
-     * Opens a local file or directory using Minecraft's built-in platform utility.
+     * Opens a local file or directory using OS native commands, with Java AWT Desktop fallback.
      */
     public static boolean openFile(File file) {
         if (file == null) return false;
@@ -77,12 +76,11 @@ public final class DesktopUtil {
             return true;
         } catch (Throwable ignored) {}
 
-        // 2. Linux / Flatpak fallback
-        if (openLinuxFallback(file.getAbsolutePath())) {
+        // 2. OS native fallback
+        if (openOsFallback(file.getAbsolutePath())) {
             return true;
         }
 
-        // 3. Java AWT Desktop fallback
         try {
             if (Desktop.isDesktopSupported()) {
                 Desktop desktop = Desktop.getDesktop();
@@ -102,16 +100,23 @@ public final class DesktopUtil {
 
 
 
-    // ─── Linux / Flatpak Helpers ──────────────────────────────────────────
+    // ─── OS Native Helpers ────────────────────────────────────────────────
 
-    private static boolean openLinuxFallback(String target) {
+    private static boolean openOsFallback(String target) {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (!os.contains("linux") && !os.contains("unix")) return false;
-
-        boolean isFlatpak = System.getenv("FLATPAK_ID") != null || Files.exists(Path.of("/.flatpak-info"));
-        String[] cmd = isFlatpak
-                ? new String[]{"flatpak-spawn", "--host", "xdg-open", target}
-                : new String[]{"xdg-open", target};
+        String[] cmd;
+        if (os.contains("win")) {
+            cmd = new String[]{"rundll32", "url.dll,FileProtocolHandler", target};
+        } else if (os.contains("mac") || os.contains("darwin")) {
+            cmd = new String[]{"open", target};
+        } else if (os.contains("linux") || os.contains("unix")) {
+            boolean isFlatpak = System.getenv("FLATPAK_ID") != null || Files.exists(Path.of("/.flatpak-info"));
+            cmd = isFlatpak
+                    ? new String[]{"flatpak-spawn", "--host", "xdg-open", target}
+                    : new String[]{"xdg-open", target};
+        } else {
+            return false;
+        }
 
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
